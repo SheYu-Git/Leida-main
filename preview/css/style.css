@@ -1,0 +1,1136 @@
+:root {
+    --primary-blue: #007AFF; /* 科技蓝 */
+    --gradient-start: #0055E6; /* 深蓝 */
+    --gradient-end: #0099FF; /* 亮蓝 */
+    --background-color: #F2F2F7;
+    --card-background: #FFFFFF;
+    --text-primary: #000000;
+    --text-secondary: #8E8E93;
+    --border-color: #C6C6C8;
+    
+    /* Tags */
+    --tag-gray-bg: #F5F5F7;
+    --tag-gray-text: #8E8E93;
+    --tag-blue-bg: #E6F2FF;
+    --tag-blue-text: #007AFF;
+    --tag-orange-bg: #FFF3E0;
+    --tag-orange-text: #FF9500;
+    --tag-red-bg: #FFEBEE;
+    --tag-red-text: #C62828;
+}
+
+/* 顶部自定义背景区域 */
+.custom-header-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 350px; /* Increased by 1/4 (280 -> 350) */
+    /* Base Image (Slide 1) - Ocean/Radar Blue */
+    background-image: linear-gradient(to bottom, rgba(0,46,128,0.68), rgba(0,94,179,0.52)), url('../assets/banner/home-code.jpg');
+    background-size: cover;
+    background-position: center bottom;
+    z-index: 0;
+    pointer-events: none; /* Let clicks pass through */
+}
+
+/* Second background image for Slide 2 - Controlled by JS now */
+.custom-header-bg::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    /* Image 2 (Slide 2) - Network/Data/Target Blue */
+    background-image: linear-gradient(to bottom, rgba(0,46,128,0.68), rgba(0,94,179,0.52)), url('../assets/banner/home-business.jpg');
+    background-size: cover;
+    background-position: center bottom;
+    opacity: 0;
+    transition: opacity 0.5s ease-in-out;
+}
+
+/* Active class to show second bg */
+.custom-header-bg.slide-1::before { opacity: 0; }
+.custom-header-bg.slide-2::before { opacity: 1; }
+
+/* Remove Animation definition */
+/* @keyframes bg-fade ... */
+
+.nav-bar {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    z-index: 90;
+    position: relative; /* 改为 relative 以便放入流中，或者 sticky 但要注意背景 */
+}
+
+/* 搜索框样式调整 */
+.search-bar-wrapper {
+    background: rgba(255, 255, 255, 0.95); /* Slightly transparent white */
+    border-radius: 20px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    margin-left: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1); /* Enhanced shadow for depth */
+}
+
+.location-selector {
+    display: flex;
+    align-items: center;
+    color: white;
+    font-weight: 500;
+    font-size: 16px;
+    flex-shrink: 0;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.2); /* Text shadow for readability on image */
+}
+
+/* Banner 区域 */
+.banner-area {
+    padding: 0; /* Remove padding to let carousel fill */
+    color: white;
+    position: relative;
+    z-index: 1;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    height: 180px; 
+    overflow: hidden; /* Hide overflow for carousel */
+}
+
+/* Carousel Styles */
+.carousel-container {
+    display: flex;
+    width: 200%; /* Two slides */
+    height: 100%;
+    transition: transform 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.carousel-slide {
+    width: 50%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding-top: 0;
+    padding-bottom: 20px;
+}
+
+.banner-title {
+    font-size: 24px;
+    font-weight: 800;
+    font-style: italic;
+    margin-bottom: 8px;
+}
+
+.banner-subtitle {
+    font-size: 19px;
+    opacity: 0.95;
+    font-weight: 500;
+}
+
+/* Indicators */
+.carousel-indicators {
+    position: absolute;
+    bottom: 25px; /* Adjusted position */
+    left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    z-index: 10;
+}
+
+.indicator {
+    width: 16px;
+    height: 2px; /* Thinner for elegance */
+    background-color: rgba(255, 255, 255, 0.4);
+    border-radius: 1px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.indicator.active {
+    background-color: #FFFFFF;
+    width: 24px; /* Slightly longer than inactive */
+    box-shadow: 0 0 4px rgba(0,0,0,0.1);
+}
+
+/* Remove CSS Animation */
+/* @keyframes slide { ... } */
+
+/* 功能按钮区 */
+.function-area {
+    display: flex;
+    justify-content: space-around;
+    padding: 20px 0;
+    position: relative;
+    z-index: 1;
+}
+
+.func-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.func-icon-box {
+    width: 48px;
+    height: 48px;
+    background: white;
+    border-radius: 12px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.func-text {
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+/* 列表容器调整 */
+.list-container {
+    position: relative;
+    z-index: 2;
+    background: white;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    padding-top: 10px;
+    /* min-height: 500px; Removed to fix flex scrolling */
+}
+
+/* 卡片样式重构 */
+.card {
+    box-shadow: none;
+    border-bottom: 0.5px solid #EEEEEE;
+    border-radius: 0;
+    margin-bottom: 0;
+    padding: 12px 16px;
+    transition: background-color 0.2s ease;
+    cursor: pointer;
+}
+
+.card-title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 8px;
+    display: inline; /* Make title inline to flow with tags if tags are inline */
+    white-space: normal; /* Ensure text wraps */
+    overflow: visible; /* Ensure no clipping */
+    word-wrap: break-word; /* Prevent long strings from breaking layout */
+}
+
+/* Wrapper to handle inline tags + title */
+.card-header-wrapper {
+    margin-bottom: 8px;
+}
+
+.card-tags-inline {
+    display: inline-flex; /* Inline flex to sit with text */
+    gap: 4px;
+    margin-right: 4px;
+    vertical-align: middle;
+    transform: translateY(-2px); /* Slight adjustment */
+}
+
+/* Old tags class for reference, can be removed or repurposed */
+.card-tags {
+    display: none; /* Hide old tags row */
+}
+
+.tag-new {
+    font-size: 11px;
+    padding: 2px 5px; /* Slightly smaller padding for inline */
+    border-radius: 4px;
+    display: inline-block;
+    white-space: nowrap;
+}
+
+/* Tab Bar 选中颜色 */
+.tab-item.active {
+    color: var(--primary-blue);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --primary-color: #0A84FF;
+        --background-color: #000000;
+        --card-background: #1C1C1E;
+        --text-primary: #FFFFFF;
+        --text-secondary: #8E8E93;
+        --border-color: #38383A;
+    }
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-primary);
+    margin: 0;
+    padding: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    -webkit-font-smoothing: antialiased;
+}
+
+/* 模拟 iPhone 外壳 (仅在大屏上) */
+@media (min-width: 600px) {
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background-color: #e5e5e5;
+    }
+    .iphone-frame {
+        width: 375px;
+        height: 812px;
+        transform: scale(0.7);
+        background-color: var(--background-color);
+        border-radius: 40px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+        overflow: hidden;
+        position: relative;
+        border: 12px solid #1c1c1e;
+        display: flex;
+        flex-direction: column;
+    }
+    .status-bar {
+        height: 44px;
+        background-color: var(--background-color); /* 半透明效果模拟不做了 */
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 20px;
+        font-size: 14px;
+        font-weight: 600;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    .notch {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 150px;
+        height: 30px;
+        background-color: #1c1c1e;
+        border-bottom-left-radius: 16px;
+        border-bottom-right-radius: 16px;
+        z-index: 101;
+    }
+    .home-indicator {
+        position: absolute;
+        bottom: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 134px;
+        height: 5px;
+        background-color: var(--text-primary);
+        border-radius: 3px;
+        opacity: 0.3;
+        z-index: 100;
+    }
+}
+
+@media (max-width: 599px) {
+    .iphone-frame {
+        width: 100%;
+        height: 100vh; /* 固定高度为视口高度 */
+        overflow: hidden; /* 防止整体滚动 */
+        position: relative;
+        display: flex;
+        flex-direction: column;
+    }
+    .status-bar, .notch, .home-indicator {
+        display: none;
+    }
+}
+
+/* 导航栏 */
+.nav-bar {
+    background-color: var(--background-color); /* iOS 默认也是这种半透明 */
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    /* height: 44px; */ /* Removed fixed height */
+    display: flex;
+    flex-direction: column; /* Changed to column for search bar */
+    justify-content: center;
+    align-items: center;
+    border-bottom: 0.5px solid rgba(0,0,0,0.1);
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    padding-bottom: 8px;
+}
+
+.nav-header {
+    width: 100%;
+    height: 44px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+}
+
+.nav-title {
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.nav-right {
+    position: absolute;
+    right: 16px;
+    color: var(--primary-color);
+    font-size: 17px;
+    cursor: pointer;
+}
+
+.detail-nav,
+.city-header {
+    position: relative;
+}
+
+.detail-nav .nav-title,
+.city-header .nav-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+/* Search Bar Styles */
+.search-bar-container {
+    width: 100%;
+    padding: 0 16px;
+    margin-bottom: 4px;
+    display: none; /* Hidden by default */
+}
+
+.search-bar {
+    background-color: rgba(118, 118, 128, 0.12);
+    border-radius: 10px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    width: 100%;
+}
+
+.search-icon {
+    color: var(--text-secondary);
+    margin-right: 6px;
+}
+
+.search-input {
+    border: none;
+    background: none;
+    width: 100%;
+    height: 100%;
+    font-size: 13px; /* Smaller font size as requested */
+    color: var(--text-primary);
+    outline: none;
+}
+
+.search-input::placeholder {
+    color: var(--text-secondary);
+}
+
+/* 列表容器 */
+.list-container {
+    padding: 16px;
+    padding-bottom: 100px; /* 增加底部留白 */
+    overflow-y: auto;
+    flex: 1; /* 使用 Flex 布局自适应剩余空间 */
+    height: auto; /* 移除固定高度 */
+    min-height: 0; /* 重要：防止 Flex 子项溢出 */
+    -webkit-overflow-scrolling: touch;
+    width: 100%; /* Ensure full width */
+}
+
+/* Common container padding fix for Member Center */
+.content-area {
+    padding: 16px;
+    width: 100%;
+}
+
+/* 卡片样式 */
+.card {
+    background-color: var(--card-background);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    transition: transform 0.1s active;
+}
+
+.card:active {
+    transform: scale(0.98);
+    background-color: #F2F2F7; /* 按下态 */
+}
+
+.card-title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 8px;
+    display: inline; /* Make title inline to flow with tags if tags are inline */
+    white-space: normal; /* Ensure text wraps */
+    overflow: visible; /* Ensure no clipping */
+    word-wrap: break-word; /* Prevent long strings from breaking layout */
+}
+
+.card-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.divider {
+    height: 1px;
+    background-color: #E5E5EA;
+    margin: 0 -16px 12px -16px;
+}
+
+.card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tag {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.tag.blue { background-color: var(--tag-blue); color: var(--tag-blue-text); }
+.tag.green { background-color: var(--tag-green); color: var(--tag-green-text); }
+.tag.orange { background-color: var(--tag-orange); color: var(--tag-orange-text); }
+.tag.gray { background-color: var(--tag-gray); color: var(--tag-gray-text); }
+
+.price {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.purchaser {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* 图标模拟 */
+.icon {
+    font-family: "SF Pro Text"; /* 暂时用文字代替 SF Symbols */
+}
+
+/* 新增底部菜单样式 */
+.tab-bar {
+    height: 83px; /* iOS standard height including home indicator */
+    background-color: var(--background-color);
+    border-top: 0.5px solid rgba(0,0,0,0.1);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-around;
+    padding-bottom: 20px; /* Space for home indicator */
+    z-index: 99;
+}
+
+.tab-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    padding-top: 8px;
+}
+
+.tab-item.active {
+    color: var(--primary-color);
+}
+
+.tab-icon {
+    width: 24px;
+    height: 24px;
+    margin-bottom: 4px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* 列表容器调整 */
+.list-container {
+    padding: 16px;
+    padding-bottom: 100px; /* 增加底部留白 */
+    overflow-y: auto;
+    flex: 1; /* 使用 Flex 布局自适应剩余空间 */
+    height: auto; /* 移除固定高度 */
+    min-height: 0; /* 重要：防止 Flex 子项溢出 */
+    -webkit-overflow-scrolling: touch;
+}
+
+
+
+/* 城市选择弹窗 */
+.city-modal {
+    position: fixed; /* Changed from absolute to fixed to ensure full coverage */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    z-index: 9999; /* Higher z-index */
+    display: none;
+    flex-direction: column;
+    animation: slideUp 0.3s ease-out;
+    transform: translateZ(0); 
+}
+
+.city-header {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 0.5px solid #E5E5EA;
+    font-weight: 600;
+    background: white;
+    flex-shrink: 0; /* Prevent shrinking */
+}
+
+/* 订阅弹窗样式 */
+.subscription-modal {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--background-color);
+    z-index: 200;
+    display: none;
+    flex-direction: column;
+    animation: slideUp 0.3s ease-out;
+}
+
+.sub-form {
+    padding: 20px;
+    background: white;
+    margin-top: 10px;
+    border-radius: 12px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-label {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+    display: block;
+}
+
+.form-input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #E5E5EA;
+    border-radius: 8px;
+    font-size: 15px;
+    background: #F9F9F9;
+    outline: none;
+}
+
+.form-helper {
+    font-size: 12px;
+    color: #999;
+    margin-top: 6px;
+}
+
+.region-options {
+    display: flex;
+    gap: 10px;
+}
+
+.region-option {
+    padding: 8px 16px;
+    border: 1px solid #E5E5EA;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #666;
+    background: white;
+    cursor: pointer;
+}
+
+.region-option.selected {
+    border-color: var(--primary-blue);
+    background: var(--tag-blue-bg);
+    color: var(--primary-blue);
+    font-weight: 500;
+}
+
+.push-toggle {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 30px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 34px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: #34C759;
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+.btn-primary {
+    background-color: var(--primary-blue);
+    color: white;
+    border: none;
+    padding: 14px;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    width: 100%;
+    margin-top: 20px;
+    cursor: pointer;
+}
+
+.btn-primary:active {
+    opacity: 0.9;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+.city-header {
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 0.5px solid #E5E5EA;
+    font-weight: 600;
+}
+
+.city-section {
+    padding: 12px 16px; /* Increased top/bottom padding */
+    background: #F2F2F7;
+    color: #8E8E93;
+    font-size: 13px;
+    margin-bottom: 8px; /* Added margin to push content down */
+}
+
+.city-item {
+    padding: 12px 16px;
+    border-bottom: 0.5px solid #E5E5EA;
+    background: white;
+    display: flex;
+    justify-content: space-between;
+}
+
+.hot-cities {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding: 12px 16px;
+    background: white;
+}
+
+/* Clean up the previous attempt */
+.hot-city-btn {
+    background-color: #8E8E93; 
+    background-size: cover;
+    background-position: center;
+    padding: 24px 0; /* Taller button */
+    text-align: center;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    color: white;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    transition: transform 0.1s;
+}
+
+.hot-city-btn:active {
+    transform: scale(0.98);
+}
+
+.hot-city-btn.active {
+    /* Strong blue overlay for active state */
+    box-shadow: inset 0 0 0 200px rgba(0,122,255,0.7);
+    color: white;
+}
+
+/* Province Grid Styles */
+.province-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding: 0 16px 16px 16px;
+}
+
+.province-item {
+    background-color: #E5E5EA; /* Fallback */
+    background-size: cover;
+    background-position: center;
+    height: 70px; /* Square-ish aspect ratio */
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    transition: transform 0.1s;
+    
+    /* Layout for icon and text */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+}
+
+.province-item:active {
+    transform: scale(0.96);
+    filter: brightness(0.9);
+}
+
+.province-name {
+    font-size: 16px;
+    font-weight: bold;
+    z-index: 1;
+}
+
+/* Province Cities Grid Container */
+.province-cities-container {
+    animation: fadeIn 0.3s;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    padding: 0 16px 16px 16px; /* Added bottom padding */
+    background: white; /* Ensure background matches */
+}
+
+/* Header spanning full width */
+.province-cities-container .city-section {
+    grid-column: 1 / -1; 
+    margin-bottom: 8px;
+    padding: 12px 16px;
+    background: #F2F2F7;
+    border-radius: 8px; /* Slightly rounded header */
+    margin-top: 10px;
+}
+
+/* Individual City Item */
+.province-cities-container .city-item {
+    justify-content: center;
+    align-items: center;
+    background: white;
+    border: 1px solid #E5E5EA;
+    border-radius: 6px;
+    padding: 10px 0; /* Slightly taller for touch target */
+    font-size: 14px;
+    color: #333;
+    display: flex;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05); /* Subtle shadow */
+}
+
+.province-cities-container .city-item:active {
+    background: #F2F2F7;
+    color: var(--primary-blue);
+    border-color: var(--primary-blue);
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 会员中心卡片滑动容器 */
+::-webkit-scrollbar {
+    display: none;
+}
+
+/* 激活码输入框 */
+.activation-box {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.activation-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #E5E5EA;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+}
+
+/* 订阅列表样式优化 */
+.sub-list {
+    padding: 0 16px;
+    background: white;
+    margin-top: 0;
+}
+
+.sub-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 0;
+    border-bottom: 0.5px solid #E5E5EA;
+    background: white;
+    transition: background-color 0.2s;
+}
+
+.sub-item:last-child {
+    border-bottom: none;
+}
+
+.sub-item:active {
+    background-color: #F9F9F9;
+}
+
+.sub-content {
+    flex: 1;
+}
+
+.sub-title {
+    font-size: 17px;
+    font-weight: 500; /* Regular to Medium */
+    color: #000;
+    margin-bottom: 6px;
+}
+
+.sub-info {
+    font-size: 13px;
+    color: #8E8E93;
+    display: flex;
+    gap: 12px;
+}
+
+.sub-actions {
+    display: flex;
+    gap: 12px;
+    margin-left: 16px;
+    align-items: center;
+}
+
+.action-icon {
+    color: #C7C7CC;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+/* 底部悬浮按钮 */
+.floating-btn-container {
+    position: fixed;
+    bottom: 110px; /* TabBar height + padding */
+    left: 0;
+    width: 100%;
+    padding: 0 48px; /* Wider padding for smaller button width appearance */
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    justify-content: center;
+}
+
+.floating-btn {
+    background-color: #34C759; /* iOS Green */
+    color: white;
+    height: 50px;
+    width: 200px; /* Fixed width pill */
+    border-radius: 25px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3);
+    cursor: pointer;
+    pointer-events: auto;
+    transition: transform 0.1s;
+}
+
+.floating-btn:active {
+    transform: scale(0.96);
+}
+
+/* Detail Modal */
+.detail-modal {
+    position: absolute;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 95%;
+    background: var(--background-color);
+    z-index: 300;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.2);
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+}
+
+.detail-modal.visible {
+    transform: translateX(0);
+}
+
+.detail-nav {
+    height: 44px;
+    background: white;
+    border-bottom: 0.5px solid rgba(0,0,0,0.1);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.detail-modal .detail-nav {
+    height: 44px;
+    min-height: 44px;
+    padding: 0 16px;
+}
+
+.detail-back {
+    display: flex;
+    align-items: center;
+    color: var(--primary-blue);
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.detail-content {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--background-color);
+}
+
+/* Login Modal */
+.login-modal {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    z-index: 400;
+    display: none;
+    flex-direction: column;
+    animation: slideUp 0.3s ease-out;
+}
+
+.auth-tabs {
+    display: flex;
+    margin-bottom: 30px;
+    border-bottom: 1px solid #E5E5EA;
+}
+
+.auth-tab {
+    flex: 1;
+    text-align: center;
+    padding: 12px 0;
+    font-size: 16px;
+    color: #8E8E93;
+    cursor: pointer;
+    position: relative;
+}
+
+.auth-tab.active {
+    color: var(--primary-blue);
+    font-weight: 600;
+}
+
+.auth-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--primary-blue);
+}

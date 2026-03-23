@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>招投标雷达 - iOS 预览</title>
+    <!-- 引入样式 -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="iphone-frame">
+        <!-- 详情页弹窗 -->
+        <div class="detail-modal" id="detail-modal">
+            <div class="status-bar" style="background: white; color: black; z-index: 11;">
+                <span>9:41</span>
+                <span>
+                    <svg width="24" height="12" viewBox="0 0 24 12" fill="currentColor">
+                        <path d="M20,3c0-1.66-1.34-3-3-3H3C1.34,0,0,1.34,0,3v6c0,1.66,1.34,3,3,3h14c1.66,0,3-1.34,3-3V3z M22,4h1c0.55,0,1,0.45,1,1v2 c0,0.55-0.45,1-1,1h-1V4z"/>
+                    </svg>
+                </span>
+            </div>
+            <div class="detail-nav">
+                <div class="detail-back" onclick="hideDetail()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    返回
+                </div>
+                <span class="nav-title">项目详情</span>
+            </div>
+            <div class="detail-content" id="detail-content">
+                <!-- Content injected by JS -->
+            </div>
+        </div>
+
+        <!-- 订阅功能弹窗 -->
+        <div id="sub-modal-mask" class="modal-mask" onclick="closeSubDialog()"></div>
+        <div class="subscription-modal" id="sub-modal">
+            <div class="detail-nav">
+                <div class="detail-back" onclick="closeSubDialog()">
+                    <span style="font-size: 16px;">取消</span>
+                </div>
+                <span class="nav-title">添加订阅</span>
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 16px;">
+                <div class="sub-form">
+                    <div class="form-group">
+                        <label class="form-label">订阅关键词</label>
+                        <input type="text" class="form-input" id="sub-keywords" placeholder="">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">订阅范围</label>
+                        <div class="region-options">
+                            <div class="region-option selected" onclick="selectRegion(this, 'city')">本市</div>
+                            <div class="region-option" onclick="selectRegion(this, 'province')">本省</div>
+                            <div class="region-option" onclick="selectRegion(this, 'country')">全国</div>
+                        </div>
+                        <div class="form-helper" id="region-helper">当前选择：北京市（城市会员权益）</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="push-toggle">
+                            <span class="form-label" style="margin: 0;">消息推送</span>
+                            <label class="switch" style="transform: scale(0.8);">
+                                <input type="checkbox" checked>
+                                <span class="slider round"></span>
+                            </label>
+                        </div>
+                        <div class="form-helper">开启后，有新项目时将通过手机消息推送给您</div>
+                    </div>
+                    
+                    <button class="btn-primary" onclick="saveSubscription()">保存订阅</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录/注册弹窗 -->
+        <div class="login-modal" id="login-modal">
+            <div class="auth-hero">
+                <button class="auth-close-btn" onclick="closeLoginModal()">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+                <div class="auth-hero-inner">
+                    <div class="auth-hero-title">招投标雷达App</div>
+                    <div class="auth-hero-subtitle">AI数字人24 小时为您寻找商机</div>
+                </div>
+            </div>
+
+            <div class="auth-panel">
+                <div class="auth-title" id="auth-title">用户登录</div>
+                <div class="auth-tabs">
+                    <div class="auth-tab active" id="tab-login" onclick="switchAuthMode('login')">登录</div>
+                    <div class="auth-tab" id="tab-register" onclick="switchAuthMode('register')">注册</div>
+                </div>
+
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label class="form-label">手机号/用户名</label>
+                        <input type="text" class="form-input" id="auth-username" placeholder="请输入手机号或用户名">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">密码</label>
+                        <input type="password" class="form-input" id="auth-password" placeholder="请输入密码">
+                    </div>
+
+                    <div class="form-group" id="confirm-password-group" style="display: none;">
+                        <label class="form-label">确认密码</label>
+                        <input type="password" class="form-input" id="auth-confirm-password" placeholder="请再次输入密码">
+                    </div>
+
+                    <div class="form-group" id="invite-code-group" style="display: none;">
+                        <label class="form-label">邀请码（选填）</label>
+                        <input type="text" class="form-input" id="auth-invite-code" placeholder="请输入邀请码">
+                    </div>
+
+                    <button class="btn-primary auth-main-btn" id="auth-btn" onclick="handleAuth()">登录</button>
+
+                    <div class="auth-helper" id="auth-helper">未注册手机号验证后将自动创建账号</div>
+                    <div class="auth-terms" id="auth-terms">继续即表示同意《用户协议》和《隐私政策》</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- City Modal -->
+        <div id="city-modal-mask" class="city-modal-mask" onclick="toggleCitySelection()"></div>
+        <div id="city-modal" class="city-modal">
+            <div class="city-header">
+                <span style="width: 40px;"></span>
+                <span class="nav-title">选择城市</span>
+                <span class="nav-right" onclick="toggleCitySelection()">✕</span>
+            </div>
+            <div class="list-container" id="city-list-container" style="padding: 0;">
+                <!-- Content will be rendered by App.renderCityList() -->
+            </div>
+        </div>
+
+        <div class="custom-header-bg"></div>
+        <div class="notch"></div>
+        <div class="status-bar" style="background: transparent; color: white;">
+            <span>9:41</span>
+            <span>
+                <svg width="24" height="12" viewBox="0 0 24 12" fill="currentColor">
+                    <path d="M20,3c0-1.66-1.34-3-3-3H3C1.34,0,0,1.34,0,3v6c0,1.66,1.34,3,3,3h14c1.66,0,3-1.34,3-3V3z M22,4h1c0.55,0,1,0.45,1,1v2 c0,0.55-0.45,1-1,1h-1V4z"/>
+                </svg>
+            </span>
+        </div>
+        
+        <div class="nav-bar">
+            <!-- Navigation content rendered by app.js -->
+            <div style="padding: 0 16px; display: flex; width: 100%; justify-content: space-between; align-items: center;">
+                <div class="location-selector" onclick="toggleCitySelection()">
+                    <span id="current-city">全国</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 4px; margin-top: 2px;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                
+                <div class="search-bar-wrapper">
+                    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" class="search-input" placeholder="输入你想关注的项目" oninput="filterList(this.value)">
+                </div>
+                
+                <div style="margin-left: 12px; display: flex; align-items: center; color: #FFD700; cursor: pointer;" onclick="switchTab(2)">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path>
+                     </svg>
+                     <span style="font-size: 12px; font-weight: 900; margin-left: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">VIP</span>
+                </div>
+            </div>
+        </div>
+            
+        <!-- Banner 区 -->
+        <div class="banner-area">
+            <div class="carousel-container" id="carousel-track">
+                <!-- Slide 1 -->
+                <div class="carousel-slide">
+                    <div class="banner-title">招投标雷达</div>
+                    <div class="banner-subtitle">AI数字员工24小时为您寻找商机！</div>
+                </div>
+                <!-- Slide 2 -->
+                <div class="carousel-slide">
+                    <div class="banner-title">精准商机订阅</div>
+                    <div class="banner-subtitle">关键词+地区，实时推送不漏标</div>
+                </div>
+            </div>
+            <!-- Indicators -->
+            <div class="carousel-indicators">
+                <div class="indicator active" onclick="switchBanner(0)"></div>
+                <div class="indicator" onclick="switchBanner(1)"></div>
+            </div>
+        </div>
+        
+        <!-- 功能按钮区 - REMOVED -->
+        <div class="function-area" style="display: none;"></div>
+
+        <!-- 内容区域 -->
+        <div class="list-container" id="content-area">
+            <!-- 默认显示列表 -->
+            <div id="list"></div>
+        </div>
+        
+        <!-- 底部菜单 -->
+        <div class="tab-bar">
+            <div class="tab-item active" onclick="switchTab(0)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                <span>最新招标</span>
+            </div>
+            <div class="tab-item" onclick="switchTab(1)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+                <span>我的订阅</span>
+            </div>
+            <div class="tab-item" onclick="switchTab(2)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+                <span>会员中心</span>
+            </div>
+        </div>
+        
+        <div class="home-indicator"></div>
+    </div>
+
+    <!-- 引入JS模块 -->
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

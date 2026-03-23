@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>招投标雷达 - iOS 预览</title>
+    <!-- 引入样式 -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="iphone-frame">
+        <!-- 详情页弹窗 -->
+        <div class="detail-modal" id="detail-modal">
+            <div class="status-bar" style="background: white; color: black; z-index: 11;">
+                <span>9:41</span>
+                <span>
+                    <svg width="24" height="12" viewBox="0 0 24 12" fill="currentColor">
+                        <path d="M20,3c0-1.66-1.34-3-3-3H3C1.34,0,0,1.34,0,3v6c0,1.66,1.34,3,3,3h14c1.66,0,3-1.34,3-3V3z M22,4h1c0.55,0,1,0.45,1,1v2 c0,0.55-0.45,1-1,1h-1V4z"/>
+                    </svg>
+                </span>
+            </div>
+            <div class="detail-nav">
+                <div class="detail-back" onclick="hideDetail()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    返回
+                </div>
+                <span class="nav-title">项目详情</span>
+            </div>
+            <div class="detail-content" id="detail-content">
+                <!-- Content injected by JS -->
+            </div>
+        </div>
+
+        <!-- 订阅功能弹窗 -->
+        <div class="subscription-modal" id="sub-modal">
+            <div class="detail-nav">
+                <div class="detail-back" onclick="closeSubDialog()">
+                    <span style="font-size: 16px;">取消</span>
+                </div>
+                <span class="nav-title">添加订阅</span>
+            </div>
+            <div style="flex: 1; overflow-y: auto; padding: 16px;">
+                <div class="sub-form">
+                    <div class="form-group">
+                        <label class="form-label">订阅关键词</label>
+                        <input type="text" class="form-input" id="sub-keywords" placeholder="输入关键词，多个请用逗号隔开">
+                        <div class="form-helper">例如：绿化工程, 医疗设备, 办公用品（单个关键词限9字以内）</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">订阅范围</label>
+                        <div class="region-options">
+                            <div class="region-option selected" onclick="selectRegion(this, 'city')">本市</div>
+                            <div class="region-option" onclick="selectRegion(this, 'province')">本省</div>
+                            <div class="region-option" onclick="selectRegion(this, 'country')">全国</div>
+                        </div>
+                        <div class="form-helper" id="region-helper">当前选择：北京市（城市会员权益）</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="push-toggle">
+                            <span class="form-label" style="margin: 0;">消息推送</span>
+                            <label class="switch">
+                                <input type="checkbox" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="form-helper">开启后，有新项目时将通过手机消息推送给您</div>
+                    </div>
+                    
+                    <button class="btn-primary" onclick="saveSubscription()">保存订阅</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 登录/注册弹窗 -->
+        <div class="login-modal" id="login-modal">
+            <div class="detail-nav">
+                <div class="detail-back" onclick="closeLoginModal()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </div>
+                <span class="nav-title">用户登录</span>
+            </div>
+            
+            <div style="flex: 1; display: flex; flex-direction: column; padding: 40px 32px; background: white;">
+                <div class="auth-tabs">
+                    <div class="auth-tab active" id="tab-login" onclick="switchAuthMode('login')">登录</div>
+                    <div class="auth-tab" id="tab-register" onclick="switchAuthMode('register')">注册</div>
+                </div>
+                
+                <div class="auth-form">
+                    <div class="form-group">
+                        <label class="form-label">手机号/用户名</label>
+                        <input type="text" class="form-input" id="auth-username" placeholder="请输入手机号或用户名">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">密码</label>
+                        <input type="password" class="form-input" id="auth-password" placeholder="请输入密码">
+                    </div>
+                    
+                    <div class="form-group" id="confirm-password-group" style="display: none;">
+                        <label class="form-label">确认密码</label>
+                        <input type="password" class="form-input" id="auth-confirm-password" placeholder="请再次输入密码">
+                    </div>
+                    
+                    <button class="btn-primary" id="auth-btn" onclick="handleAuth()">登录</button>
+                    
+                    <div class="auth-helper" id="auth-helper" style="margin-top: 20px; text-align: center; color: #8E8E93; font-size: 13px;">
+                        未注册手机号验证后将自动创建账号
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 城市选择弹窗 -->
+        <div class="city-modal" id="city-modal">
+            <div class="city-header">
+                <span class="nav-title">选择城市</span>
+                <span class="nav-right" style="color: var(--primary-blue);" onclick="toggleCitySelection()">✕</span>
+            </div>
+            
+            <!-- City Search Bar -->
+            <div style="padding: 10px 16px; background: white; border-bottom: 0.5px solid #E5E5EA;">
+                <div style="background-color: rgba(118, 118, 128, 0.12); border-radius: 10px; height: 36px; display: flex; align-items: center; padding: 0 8px;">
+                    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #8E8E93; margin-right: 6px;">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" placeholder="搜索城市" style="border: none; background: none; width: 100%; height: 100%; font-size: 14px; outline: none;" oninput="filterCity(this.value)">
+                </div>
+            </div>
+
+            <div style="flex: 1; overflow-y: auto;">
+                <div class="city-section">当前定位</div>
+                <div class="city-item" onclick="selectCity('北京')">
+                    <span style="display: flex; align-items: center;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="color: var(--primary-blue); margin-right: 8px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                        北京
+                    </span>
+                    <span style="color: var(--primary-blue); font-size: 12px;">GPS定位</span>
+                </div>
+                
+                <div class="city-section">热门城市</div>
+                <div class="hot-cities">
+                    <div class="hot-city-btn" onclick="selectCity('全国')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=200&h=100&fit=crop');">全国</div>
+                    <div class="hot-city-btn" onclick="selectCity('北京')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1508804185872-d7badad00f7d?w=200&h=100&fit=crop');">北京</div>
+                    <div class="hot-city-btn" onclick="selectCity('上海')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1548232979-6c557ee14752?w=200&h=100&fit=crop');">上海</div>
+                    <div class="hot-city-btn" onclick="selectCity('广州')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1583248352195-d3a8e766ede2?w=200&h=100&fit=crop');">广州</div>
+                    <div class="hot-city-btn" onclick="selectCity('深圳')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1518174643594-55099712128a?w=200&h=100&fit=crop');">深圳</div>
+                    <div class="hot-city-btn" onclick="selectCity('杭州')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1516131586549-0d332617300c?w=200&h=100&fit=crop');">杭州</div>
+                    <div class="hot-city-btn" onclick="selectCity('成都')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1589182373726-e4f658ab50f0?w=200&h=100&fit=crop');">成都</div>
+                    <div class="hot-city-btn" onclick="selectCity('天津')" style="background-image: linear-gradient(rgba(0,0,0,0.3), rgba(0,0,0,0.3)), url('https://images.unsplash.com/photo-1535448033526-27e8571b5763?w=200&h=100&fit=crop');">天津</div>
+                </div>
+                
+                <!-- Dynamic City List Container -->
+                <div id="city-list-container">
+                    <!-- Pre-rendered or dynamically rendered cities will go here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="custom-header-bg"></div>
+        <div class="notch"></div>
+        <div class="status-bar" style="background: transparent; color: white;">
+            <span>9:41</span>
+            <span>
+                <svg width="24" height="12" viewBox="0 0 24 12" fill="currentColor">
+                    <path d="M20,3c0-1.66-1.34-3-3-3H3C1.34,0,0,1.34,0,3v6c0,1.66,1.34,3,3,3h14c1.66,0,3-1.34,3-3V3z M22,4h1c0.55,0,1,0.45,1,1v2 c0,0.55-0.45,1-1,1h-1V4z"/>
+                </svg>
+            </span>
+        </div>
+        
+        <div class="nav-bar">
+            <!-- Navigation content rendered by app.js -->
+            <div style="padding: 0 16px; display: flex; width: 100%; justify-content: space-between; align-items: center;">
+                <div class="location-selector" onclick="toggleCitySelection()">
+                    <span id="current-city">全国</span> <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="margin-left: 4px; margin-top: 2px;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                
+                <div class="search-bar-wrapper">
+                    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    <input type="text" class="search-input" placeholder="输入你想关注的项目" oninput="filterList(this.value)">
+                </div>
+                
+                <div style="margin-left: 12px; display: flex; align-items: center; color: #FFD700; cursor: pointer;" onclick="switchTab(2)">
+                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path>
+                     </svg>
+                     <span style="font-size: 12px; font-weight: 900; margin-left: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">VIP</span>
+                </div>
+            </div>
+        </div>
+            
+        <!-- Banner 区 -->
+        <div class="banner-area">
+            <div class="carousel-container" id="carousel-track">
+                <!-- Slide 1 -->
+                <div class="carousel-slide">
+                    <div class="banner-title">招投标雷达</div>
+                    <div class="banner-subtitle">AI数字员工24小时为您寻找商机！</div>
+                </div>
+                <!-- Slide 2 -->
+                <div class="carousel-slide">
+                    <div class="banner-title">精准商机订阅</div>
+                    <div class="banner-subtitle">关键词+地区，实时推送不漏标</div>
+                </div>
+            </div>
+            <!-- Indicators -->
+            <div class="carousel-indicators">
+                <div class="indicator active" onclick="switchBanner(0)"></div>
+                <div class="indicator" onclick="switchBanner(1)"></div>
+            </div>
+        </div>
+        
+        <!-- 功能按钮区 - REMOVED -->
+        <div class="function-area" style="display: none;"></div>
+
+        <!-- 内容区域 -->
+        <div class="list-container" id="content-area">
+            <!-- 默认显示列表 -->
+            <div id="list"></div>
+        </div>
+        
+        <!-- 底部菜单 -->
+        <div class="tab-bar">
+            <div class="tab-item active" onclick="switchTab(0)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                </svg>
+                <span>最新招标</span>
+            </div>
+            <div class="tab-item" onclick="switchTab(1)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+                <span>我的订阅</span>
+            </div>
+            <div class="tab-item" onclick="switchTab(2)">
+                <svg class="tab-icon" viewBox="0 0 24 24">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+                <span>会员中心</span>
+            </div>
+        </div>
+        
+        <div class="home-indicator"></div>
+    </div>
+
+    <!-- 引入JS模块 -->
+    <script src="js/data.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
