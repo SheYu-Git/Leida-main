@@ -253,6 +253,21 @@ const App = {
         mockSystemEls.forEach(el => el.remove());
     },
 
+    applyCjkFontFallback() {
+        const stack = '"PingFang SC","PingFang TC","Heiti SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif';
+        const id = 'br-force-cjk-font';
+        const prev = document.getElementById(id);
+        if (prev) prev.remove();
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = `html,body,*{font-family:${stack} !important;} input,textarea,button,select{font-family:${stack} !important;}`;
+        document.head.appendChild(style);
+        try {
+            document.documentElement.style.fontFamily = stack;
+            document.body.style.fontFamily = stack;
+        } catch (e) {}
+    },
+
     isNativeAppRuntime() {
         const protocol = (window.location && window.location.protocol) || '';
         return protocol === 'capacitor:' || protocol === 'file:' || !!window.Capacitor;
@@ -305,6 +320,7 @@ const App = {
         if (this.isNativeAppRuntime()) {
             document.body.classList.add('native-app');
         }
+        this.applyCjkFontFallback();
         
         // Remove mock status bar/notch/home-indicator and use native system UI
         this.useNativeSystemUI();
@@ -1469,9 +1485,23 @@ const App = {
         return this.hasCapacitorHttp() || this.hasNativeHttpPlugin();
     },
 
+    hasReplacementChar(value, depth = 0) {
+        if (value == null) return false;
+        if (typeof value === 'string') return value.includes('\uFFFD');
+        if (depth > 4) return false;
+        if (Array.isArray(value)) return value.some((item) => this.hasReplacementChar(item, depth + 1));
+        if (typeof value === 'object') {
+            for (const k in value) {
+                if (Object.prototype.hasOwnProperty.call(value, k) && this.hasReplacementChar(value[k], depth + 1)) return true;
+            }
+        }
+        return false;
+    },
+
     async requestJson(url, options = {}) {
         const isAbs = /^https?:\/\//.test(url);
         const method = String(options.method || 'GET').toUpperCase();
+        const skipNativeHttp = !!options.__skipNativeHttp || (this.isNativeAppRuntime() && method === 'GET');
         const timeoutMs = Number(options.timeoutMs || 0);
         const bodyObj = options.body;
         const headers = {
@@ -1511,12 +1541,15 @@ const App = {
         if (isAbs && this.isNativeAppRuntime() && !this.hasCapacitorHttp() && !this.hasNativeHttpPlugin()) {
             await this.waitForNativeHttpReady(3000);
         }
-        if (isAbs && this.hasCapacitorHttp() && method === 'GET') {
+        if (isAbs && !skipNativeHttp && this.hasCapacitorHttp() && method === 'GET') {
             try {
                 const ret = await withTimeout(window.Capacitor.Plugins.CapacitorHttp.get({ url, headers }), nativeTimeoutMs);
                 let json = ret && ret.data;
                 if (typeof json === 'string') {
                     try { json = JSON.parse(json); } catch (e) {}
+                }
+                if (this.hasReplacementChar(json)) {
+                    return await this.requestJson(url, Object.assign({}, options, { __skipNativeHttp: true }));
                 }
                 return { ok: (ret && ret.status >= 200 && ret.status < 300), status: (ret && ret.status) || 0, json };
             } catch (e) {
@@ -1524,7 +1557,7 @@ const App = {
                 if (!msg.includes('NATIVE_HTTP_TIMEOUT')) throw e;
             }
         }
-        if (isAbs && this.hasNativeHttpPlugin() && method === 'GET') {
+        if (isAbs && !skipNativeHttp && this.hasNativeHttpPlugin() && method === 'GET') {
             try {
                 const ret = await withTimeout(window.Capacitor.Plugins.NativeHttpPlugin.get({
                     url,
@@ -1534,6 +1567,9 @@ const App = {
                 let json = ret && ret.data;
                 if (typeof json === 'string') {
                     try { json = JSON.parse(json); } catch (e) {}
+                }
+                if (this.hasReplacementChar(json)) {
+                    return await this.requestJson(url, Object.assign({}, options, { __skipNativeHttp: true }));
                 }
                 return { ok: status >= 200 && status < 300, status, json };
             } catch (e) {
@@ -8734,7 +8770,7 @@ const App = {
             <div class="member-root" style="padding:0;width:100%;position:relative;background:#F2F2F7;">
                 ${this.renderMemberHeader()}
                 ${userCardHtml}
-                <div style="padding: 16px; margin-top: ${memberContentMarginTop}; position: relative; z-index: 10; background: #F2F2F7; border-top-left-radius: 20px; border-top-right-radius: 20px; min-height: 500px; padding-bottom:100px;">
+                <div class="member-content-wrap" style="padding: 16px; margin-top: ${memberContentMarginTop}; position: relative; z-index: 10; background: #F2F2F7; border-top-left-radius: 20px; border-top-right-radius: 20px; min-height: 500px; padding-bottom:100px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 4px 0 4px;">
                         <div style="font-size: 18px; font-weight: 700; color: #333; display: flex; align-items: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #FF9500;"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
@@ -8771,7 +8807,7 @@ const App = {
                     </div>
                 </div>
 
-                <div style="position:fixed;left:0;right:0;bottom:calc(max(env(safe-area-inset-bottom), 0px));background:#fff;border-top:1px solid #ECECEC;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;z-index:200;">
+                <div class="member-purchase-bar" style="position:fixed;left:0;right:0;bottom:calc(max(env(safe-area-inset-bottom), 0px));background:#fff;border-top:1px solid #ECECEC;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;z-index:200;">
                     <div>
                         <div style="font-size:12px;color:#999;">当前套餐</div>
                         <div style="font-size:22px;font-weight:800;color:#FF5A2A;line-height:1.1;">试用1个月</div>

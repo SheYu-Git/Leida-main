@@ -301,7 +301,7 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "PingFang TC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
     background-color: var(--background-color);
     color: var(--text-primary);
     margin: 0;
@@ -423,6 +423,76 @@ body.native-app #content-area.member-fullbleed {
 body.native-app #content-area.member-fullbleed .member-root {
     width: 100%;
     max-width: 100%;
+}
+
+@media (min-width: 768px) {
+    body.native-app .nav-bar > div,
+    body.native-app .banner-area,
+    body.native-app #content-area:not(.member-fullbleed) {
+        max-width: 980px;
+        margin-left: auto;
+        margin-right: auto;
+        width: 100%;
+    }
+
+    body.native-app #content-area:not(.member-fullbleed) {
+        padding-left: 24px;
+        padding-right: 24px;
+    }
+
+    body.native-app .tab-bar {
+        width: min(980px, 100%);
+        left: 50%;
+        transform: translateX(-50%);
+    }
+
+    body.native-app #content-area.member-fullbleed .member-root {
+        max-width: 980px;
+        margin: 0 auto;
+    }
+
+    body.native-app #content-area.member-fullbleed .member-content-wrap {
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+        padding-bottom: 120px !important;
+    }
+
+    body.native-app #content-area.member-fullbleed .member-purchase-bar {
+        left: 50% !important;
+        right: auto !important;
+        width: min(980px, 100%);
+        transform: translateX(-50%);
+        padding-left: 24px !important;
+        padding-right: 24px !important;
+        padding-bottom: calc(max(env(safe-area-inset-bottom), 0px) + 12px) !important;
+    }
+
+    body.native-app .login-modal {
+        justify-content: center;
+        padding: 24px;
+    }
+
+    body.native-app .login-modal .auth-hero,
+    body.native-app .login-modal .auth-panel {
+        width: min(520px, 100%);
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    body.native-app .login-modal .auth-hero {
+        min-height: 220px;
+        border-top-left-radius: 28px;
+        border-top-right-radius: 28px;
+    }
+
+    body.native-app .login-modal .auth-panel {
+        margin-top: 0;
+        border-top-left-radius: 0;
+        border-top-right-radius: 0;
+        border-bottom-left-radius: 28px;
+        border-bottom-right-radius: 28px;
+        padding-bottom: 24px;
+    }
 }
 
 /* 导航栏 */
@@ -639,7 +709,7 @@ body.native-app #content-area.member-fullbleed .member-root {
 
 /* 图标模拟 */
 .icon {
-    font-family: "SF Pro Text"; /* 暂时用文字代替 SF Symbols */
+    font-family: inherit;
 }
 
 /* 新增底部菜单样式 */
