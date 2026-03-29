@@ -1403,6 +1403,24 @@ input:checked + .slider:before {
     box-shadow: 0 6px 14px rgba(15, 76, 186, 0.24);
 }
 
+.auth-face-btn {
+    margin-top: 12px;
+    height: 50px;
+    width: 100%;
+    display: block;
+    border-radius: 12px;
+    font-size: 17px;
+    font-weight: 700;
+    color: #FFFFFF;
+    background: linear-gradient(135deg, #2F3D5A 0%, #1E2A43 100%);
+    box-shadow: 0 8px 16px rgba(30, 42, 67, 0.24);
+}
+
+.auth-face-btn:active {
+    transform: translateY(1px);
+    box-shadow: 0 5px 12px rgba(30, 42, 67, 0.2);
+}
+
 .auth-form .form-group {
     margin-bottom: 14px;
 }

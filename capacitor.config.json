@@ -1,7 +1,10 @@
 {
   "appId": "com.heartguide.app",
-  "appName": "招投标雷达",
+  "appName": "商机雷达",
   "webDir": "www",
+  "ios": {
+    "minVersion": "17.0"
+  },
   "server": {
     "cleartext": true
   }

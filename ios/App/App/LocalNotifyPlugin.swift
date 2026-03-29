@@ -60,7 +60,7 @@ public class LocalNotifyPlugin: CAPPlugin, CAPBridgedPlugin, UNUserNotificationC
     }
 
     @objc public func notify(_ call: CAPPluginCall) {
-        let title = call.getString("title") ?? "招投标雷达"
+        let title = call.getString("title") ?? "商机雷达"
         let body = call.getString("body") ?? ""
         let id = call.getString("id") ?? UUID().uuidString
 

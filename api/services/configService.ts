@@ -19,21 +19,41 @@ const DEFAULT_BOOTSTRAP: Record<string, any> = {
     paidExtendDays: 30,
   },
   'copy.auth': {
-    title: '招投标雷达App',
+    title: '商机雷达',
     subtitle: 'AI数字人24 小时为您寻找商机',
   },
   'copy.banner': {
     slides: [
-      { title: '招投标雷达', subtitle: 'AI数字员工24小时为您寻找商机！' },
+      { title: '商机雷达', subtitle: 'AI数字员工24小时为您寻找商机！' },
       { title: '精准商机订阅', subtitle: '关键词+地区，实时推送不漏标' },
     ],
   },
   'notice.popup': {
     enabled: false,
     title: '运营公告',
-    content: '欢迎使用招投标雷达，最新活动已上线。',
+    content: '欢迎使用商机雷达，最新活动已上线。',
     buttonText: '我知道了',
     version: 'v1',
+  },
+  'payment.channels': {
+    wechatEnabled: true,
+    alipayEnabled: true,
+    transferEnabled: true,
+    wechatLabel: '微信支付',
+    alipayLabel: '支付宝支付',
+    transferLabel: '对公转账',
+    wechatAppId: '',
+    wechatMchId: '',
+    wechatApiKey: '',
+    alipayAppId: '',
+    alipaySellerId: '',
+    alipayPublicKey: '',
+    transferCompanyName: '舍予基业（珠海）控股集团有限公司',
+    transferTaxNo: '91440400MABMPMTK15',
+    transferAddress: '珠海市香洲区宝成路7号6栋2718房',
+    transferPhone: '18607560510',
+    transferBank: '中国建设银行股份有限公司珠海横琴金融街支行',
+    transferAccount: '44050164005209668888',
   },
   'copy.member': {
     free: {
@@ -56,6 +76,12 @@ const DEFAULT_BOOTSTRAP: Record<string, any> = {
       subtitle: '全国商机尽在掌握',
       benefits: ['全国无限浏览', '订阅 200 个关键词', '专属客服服务'],
     },
+  },
+  'member.permission.matrix': {
+    free: { scope: '体验', viewLimit: 10, keywordLimit: 1, deviceLimit: 1, serviceCount: 0 },
+    city: { scope: '城市', viewLimit: 100, keywordLimit: 10, deviceLimit: 2, serviceCount: 1 },
+    province: { scope: '全省', viewLimit: 500, keywordLimit: 50, deviceLimit: 5, serviceCount: 3 },
+    country: { scope: '全国', viewLimit: -1, keywordLimit: 200, deviceLimit: 10, serviceCount: 5 },
   },
 };
 

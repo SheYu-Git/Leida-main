@@ -1,5 +1,7 @@
 import express, { type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+import { AlipaySdk } from 'alipay-sdk';
 import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import MemberPlan from '../models/MemberPlan.js';
@@ -185,9 +187,83 @@ const makeOrderNo = (prefix: string) => {
   return `${prefix}${ts}${rand}`;
 };
 
+const getAppleIapProductMap = () => ({
+  city: String(process.env.APPLE_IAP_PRODUCT_CITY || '').trim(),
+  province: String(process.env.APPLE_IAP_PRODUCT_PROVINCE || '').trim(),
+  country: String(process.env.APPLE_IAP_PRODUCT_COUNTRY || '').trim(),
+});
+
+const makeStableAppAccountToken = (userId: number) => {
+  const hex = crypto.createHash('sha256').update(`leida-user-${Number(userId) || 0}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+const findPlanCodeByAppleProductId = (productId: string) => {
+  const pid = String(productId || '').trim();
+  if (!pid) return '';
+  const map = getAppleIapProductMap();
+  if (map.city && map.city === pid) return 'city';
+  if (map.province && map.province === pid) return 'province';
+  if (map.country && map.country === pid) return 'country';
+  return '';
+};
+
+const toHttpsBase = (req: Request) => {
+  const host = String(req.get('host') || '').trim();
+  if (!host) return 'https://zhaobiao.agecms.com';
+  const proto = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim() || 'https';
+  return `${proto}://${host}`;
+};
+
+const readAlipayConfig = async () => {
+  const cfg = await getPublishedConfigByKey('payment.channels', {});
+  const clean = (v: unknown) => String(v || '').trim().replace(/^['"`]+|['"`]+$/g, '');
+  const normalizePem = (v: unknown) => clean(v).replace(/\\n/g, '\n');
+  const appId = clean(process.env.ALIPAY_APP_ID || cfg?.alipayAppId || '');
+  const privateKey = normalizePem(process.env.ALIPAY_PRIVATE_KEY || '');
+  const alipayPublicKey = normalizePem(process.env.ALIPAY_PUBLIC_KEY || cfg?.alipayPublicKey || '');
+  const gateway = clean(process.env.ALIPAY_GATEWAY || cfg?.alipayGateway || 'https://openapi.alipay.com/gateway.do');
+  const notifyUrl = clean(process.env.ALIPAY_NOTIFY_URL || cfg?.alipayNotifyUrl || '');
+  const returnUrl = clean(process.env.ALIPAY_RETURN_URL || cfg?.alipayReturnUrl || '');
+  return { appId, privateKey, alipayPublicKey, gateway, notifyUrl, returnUrl };
+};
+
+const createAlipayClient = (cfg: { appId: string; privateKey: string; alipayPublicKey: string; gateway: string; }) => (
+  new AlipaySdk({
+    appId: cfg.appId,
+    privateKey: cfg.privateKey,
+    alipayPublicKey: cfg.alipayPublicKey,
+    gateway: cfg.gateway,
+  })
+);
+
+const applyPaidMemberOrder = async (uid: number, planCode: string, scopeValue: string) => {
+  const user = await User.findByPk(uid);
+  if (!user) return null;
+  const plan = await MemberPlan.findOne({ where: { code: planCode } as any }).catch(() => null as any);
+  const durationDays = plan ? Math.max(1, Number((plan as any).duration_days || 365)) : 365;
+  const now = Date.now();
+  const addMs = durationDays * 24 * 60 * 60 * 1000;
+  const curExpireMs = normalizeVipExpireMs((user as any).vip_expire_at);
+  const base = curExpireMs > now && String((user as any).vip_level || '') === planCode ? curExpireMs : now;
+  const nextScope = planCode === 'country' ? '全国' : String(scopeValue || '').trim();
+  await (user as any).update({ vip_level: planCode, vip_scope_value: nextScope, vip_expire_at: base + addMs });
+  return user;
+};
+
+const normalizeTrialUsage = (rows: any[]) => {
+  const used = { city: false, province: false, country: false };
+  for (const r of rows || []) {
+    const code = String((r as any)?.plan_code || '').trim();
+    if (code === 'city' || code === 'province' || code === 'country') (used as any)[code] = true;
+  }
+  return used;
+};
+
 router.get('/plans', async (req: Request, res: Response) => {
   try { await ensureSeedOnce(); } catch (e) {}
   const plans = await MemberPlan.findAll({ where: { is_active: true }, order: [['id', 'ASC']] });
+  const productMap = getAppleIapProductMap();
   res.json({
     code: 1,
     msg: 'success',
@@ -196,6 +272,7 @@ router.get('/plans', async (req: Request, res: Response) => {
       name: String(p.name || ''),
       priceYuan: Number(p.price_yuan || 0),
       durationDays: Number(p.duration_days || 0),
+      appleProductId: productMap[String(p.code) as 'city' | 'province' | 'country'] || '',
       entitlements: (() => {
         try { return JSON.parse(String(p.entitlements_json || '{}')); } catch (e) { return {}; }
       })(),
@@ -235,7 +312,14 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
   }
   const subs = await UserSubscription.findAll({ where: { user_id: uid }, order: [['updated_at', 'DESC']] });
   const plans = await MemberPlan.findAll({ where: { is_active: true }, order: [['id', 'ASC']] });
-  const inviteCode = await ensureInviteCode(user as any);
+  const trialRows = await MemberOrder.findAll({
+    where: { user_id: Number(uid || 0), source: 'trial', status: 'fulfilled' } as any,
+    attributes: ['plan_code'],
+  }).catch(() => [] as any[]);
+  const trialUsage = normalizeTrialUsage(trialRows as any[]);
+  const productMap = getAppleIapProductMap();
+  const iapReferenceUuid = makeStableAppAccountToken(Number(uid || 0));
+  const inviteCode = String((user as any).invite_code || '');
   const profileCompletion = buildProfileCompletion(user as any);
   const rewardCfg = await readProfileRewardConfig();
   res.json({
@@ -257,6 +341,8 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
         inviteCode,
         invitedByUserId: Number((user as any).invited_by_user_id || 0),
         inviteRewardTotalYuan: Number((user as any).invite_reward_total_yuan || 0),
+        iapReferenceUuid,
+        trialUsage,
         profileRewardGrantedAt: (user as any).profile_reward_granted_at ? new Date((user as any).profile_reward_granted_at).toISOString() : null,
         ...normalizeVip(user as any),
         viewUsage: Number((user as any).view_usage || 0),
@@ -267,12 +353,14 @@ router.get('/me', authenticateToken, async (req: Request, res: Response) => {
         freeToCityDays: rewardCfg.freeToCityDays,
         paidExtendDays: rewardCfg.paidExtendDays,
       },
+      trialUsage,
       subscriptions: subs.map((s: any) => toSubDto(s)),
       plans: plans.map((p: any) => ({
         code: String(p.code),
         name: String(p.name || ''),
         priceYuan: Number(p.price_yuan || 0),
         durationDays: Number(p.duration_days || 0),
+        appleProductId: productMap[String(p.code) as 'city' | 'province' | 'country'] || '',
         entitlements: (() => {
           try { return JSON.parse(String(p.entitlements_json || '{}')); } catch (e) { return {}; }
         })(),
@@ -445,11 +533,321 @@ router.post('/activate', authenticateToken, async (req: Request, res: Response) 
   res.json({ code: 1, msg: 'success', data: normalizeVip(user as any) });
 });
 
+router.post('/trial/start', authenticateToken, async (req: Request, res: Response) => {
+  try { await ensureSeedOnce(); } catch (e) {}
+  const uid = Number((req as any).user?.id || 0);
+  if (!uid) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const planCode = String(req.body?.planCode || '').trim();
+  const scopeValue = String(req.body?.scopeValue || '').trim();
+  if (!['city', 'province', 'country'].includes(planCode)) {
+    res.status(400).json({ code: 0, msg: 'Invalid planCode' });
+    return;
+  }
+  if (planCode !== 'country' && !scopeValue) {
+    res.status(400).json({ code: 0, msg: 'scopeValue required' });
+    return;
+  }
+  const duplicated = await MemberOrder.findOne({
+    where: { user_id: uid, plan_code: planCode, source: 'trial', status: 'fulfilled' } as any,
+    attributes: ['id'],
+  }).catch(() => null as any);
+  if (duplicated) {
+    res.status(400).json({ code: 0, msg: '该会员档位仅可试用一次' });
+    return;
+  }
+  const user = await User.findByPk(uid);
+  if (!user) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const trialDays = Math.max(1, Number(process.env.MEMBER_TRIAL_DAYS || 30));
+  const now = Date.now();
+  const curExpireMs = normalizeVipExpireMs((user as any).vip_expire_at);
+  const base = curExpireMs > now && String((user as any).vip_level || '') === planCode ? curExpireMs : now;
+  const nextScope = planCode === 'country' ? '全国' : scopeValue;
+  await (user as any).update({
+    vip_level: planCode,
+    vip_scope_value: nextScope,
+    vip_expire_at: base + trialDays * 24 * 60 * 60 * 1000,
+  });
+  await MemberOrder.create({
+    order_no: makeOrderNo('TRY'),
+    user_id: Number(uid),
+    plan_code: planCode,
+    scope_value: nextScope,
+    amount_yuan: '0.00',
+    source: 'trial',
+    status: 'fulfilled',
+    paid_at: new Date(),
+    fulfilled_at: new Date(),
+    ext_json: JSON.stringify({ trial: true, trialDays }),
+  } as any);
+  res.json({ code: 1, msg: 'success', data: normalizeVip(user as any) });
+});
+
+router.post('/apple/verify', authenticateToken, async (req: Request, res: Response) => {
+  try { await ensureSeedOnce(); } catch (e) {}
+  const uid = Number((req as any).user?.id || 0);
+  if (!uid) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const levelFromClient = String(req.body?.level || '').trim();
+  const productId = String(req.body?.productId || '').trim();
+  const txRaw = req.body?.transaction;
+  if (!productId || !txRaw) {
+    res.status(400).json({ code: 0, msg: 'Missing productId or transaction' });
+    return;
+  }
+  const productPlanCode = findPlanCodeByAppleProductId(productId);
+  if (!productPlanCode) {
+    res.status(400).json({ code: 0, msg: '苹果内购商品未配置' });
+    return;
+  }
+  if (levelFromClient && levelFromClient !== productPlanCode) {
+    res.status(400).json({ code: 0, msg: '商品与会员等级不匹配' });
+    return;
+  }
+  let tx: any = null;
+  try {
+    tx = typeof txRaw === 'string' ? JSON.parse(txRaw) : txRaw;
+  } catch (e) {
+    res.status(400).json({ code: 0, msg: 'Invalid transaction payload' });
+    return;
+  }
+  const txId = String(tx?.transactionId || tx?.id || '').trim();
+  const txProductId = String(tx?.productId || tx?.productID || '').trim();
+  const appAccountToken = String(tx?.appAccountToken || '').trim();
+  const expectedToken = makeStableAppAccountToken(uid);
+  if (!txId) {
+    res.status(400).json({ code: 0, msg: 'Missing transactionId' });
+    return;
+  }
+  if (!txProductId || txProductId !== productId) {
+    res.status(400).json({ code: 0, msg: 'Transaction product mismatch' });
+    return;
+  }
+  if (appAccountToken && appAccountToken !== expectedToken) {
+    res.status(400).json({ code: 0, msg: 'Transaction account token mismatch' });
+    return;
+  }
+  const duplicated = await MemberOrder.findOne({ where: { payment_tx_no: txId } as any }).catch(() => null as any);
+  if (duplicated) {
+    const user = await User.findByPk(uid);
+    if (!user) {
+      res.status(401).json({ code: 0, msg: 'Unauthorized' });
+      return;
+    }
+    res.json({ code: 1, msg: 'success', data: normalizeVip(user as any) });
+    return;
+  }
+  const plan = await MemberPlan.findOne({ where: { code: productPlanCode } as any }).catch(() => null as any);
+  const durationDays = plan ? Number((plan as any).duration_days || 365) : 365;
+  const amountYuan = plan ? Number((plan as any).price_yuan || 0) : 0;
+  const user = await User.findByPk(uid);
+  if (!user) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const now = Date.now();
+  const addMs = durationDays * 24 * 60 * 60 * 1000;
+  const curExpireMs = normalizeVipExpireMs((user as any).vip_expire_at);
+  const base = curExpireMs > now && String((user as any).vip_level || '') === productPlanCode ? curExpireMs : now;
+  const nextScope = productPlanCode === 'country' ? '全国' : String(req.body?.scopeValue || '').trim();
+  await (user as any).update({ vip_level: productPlanCode, vip_scope_value: nextScope, vip_expire_at: base + addMs });
+  await MemberOrder.create({
+    order_no: makeOrderNo('IOS'),
+    user_id: Number(uid),
+    plan_code: productPlanCode,
+    scope_value: nextScope,
+    amount_yuan: Number.isFinite(amountYuan) ? amountYuan.toFixed(2) : '0.00',
+    source: 'ios_iap',
+    payment_tx_no: txId,
+    status: 'fulfilled',
+    paid_at: new Date(),
+    fulfilled_at: new Date(),
+    ext_json: JSON.stringify({
+      channel: 'apple_iap',
+      productId,
+      transactionId: txId,
+      appAccountToken: appAccountToken || expectedToken,
+      environment: String(tx?.environment || ''),
+      purchaseDate: String(tx?.purchaseDate || ''),
+      raw: tx,
+    }),
+  } as any);
+  await settleFirstPurchaseReward(Number(uid), productPlanCode);
+  res.json({ code: 1, msg: 'success', data: normalizeVip(user as any) });
+});
+
+router.post('/alipay/create', authenticateToken, async (req: Request, res: Response) => {
+  try { await ensureSeedOnce(); } catch (e) {}
+  const uid = Number((req as any).user?.id || 0);
+  if (!uid) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const planCode = String(req.body?.planCode || '').trim();
+  const scopeValue = String(req.body?.scopeValue || '').trim();
+  if (!['city', 'province', 'country'].includes(planCode)) {
+    res.status(400).json({ code: 0, msg: 'Invalid planCode' });
+    return;
+  }
+  const plan = await MemberPlan.findOne({ where: { code: planCode } as any }).catch(() => null as any);
+  const amountYuan = plan ? Number((plan as any).price_yuan || 0) : 0;
+  if (!(Number.isFinite(amountYuan) && amountYuan > 0)) {
+    res.status(400).json({ code: 0, msg: '套餐价格无效' });
+    return;
+  }
+  const user = await User.findByPk(uid);
+  if (!user) {
+    res.status(401).json({ code: 0, msg: 'Unauthorized' });
+    return;
+  }
+  const aliCfg = await readAlipayConfig();
+  if (!aliCfg.appId || !aliCfg.privateKey || !aliCfg.alipayPublicKey) {
+    res.status(500).json({ code: 0, msg: '支付宝配置缺失，请配置 ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_PUBLIC_KEY' });
+    return;
+  }
+  const alipay = createAlipayClient(aliCfg);
+  const orderNo = makeOrderNo('ALI');
+  const nextScope = planCode === 'country' ? '全国' : scopeValue;
+  await MemberOrder.create({
+    order_no: orderNo,
+    user_id: Number(uid),
+    plan_code: planCode,
+    scope_value: nextScope,
+    amount_yuan: amountYuan.toFixed(2),
+    source: 'alipay',
+    status: 'pending',
+    ext_json: JSON.stringify({ channel: 'alipay', stage: 'created' }),
+  } as any);
+  const base = toHttpsBase(req);
+  const notifyUrl = String(aliCfg.notifyUrl || `${base}/api/member/alipay/notify`).trim();
+  const returnUrl = String(aliCfg.returnUrl || `${base}/#/member?payResult=alipay`).trim();
+  const subject = `${String((plan as any)?.name || '').trim() || planCode}开通`;
+  try {
+    const payUrl = alipay.pageExec('alipay.trade.wap.pay', 'GET', {
+      notifyUrl,
+      returnUrl,
+      bizContent: {
+        outTradeNo: orderNo,
+        productCode: 'QUICK_WAP_WAY',
+        totalAmount: amountYuan.toFixed(2),
+        subject,
+      },
+    });
+    res.json({
+      code: 1,
+      msg: 'success',
+      data: {
+        orderNo,
+        payUrl,
+      },
+    });
+  } catch (e: any) {
+    const errMsg = String(e?.message || '').trim();
+    console.error('[alipay.create] failed:', errMsg);
+    await MemberOrder.update({
+      status: 'failed',
+      ext_json: JSON.stringify({ channel: 'alipay', stage: 'create_failed', msg: errMsg }),
+    } as any, { where: { order_no: orderNo } as any }).catch(() => null);
+    res.status(500).json({ code: 0, msg: errMsg ? `支付宝下单失败：${errMsg}` : '支付宝下单失败' });
+  }
+});
+
+router.post('/alipay/notify', async (req: Request, res: Response) => {
+  try { await ensureSeedOnce(); } catch (e) {}
+  const body: any = req.body || {};
+  const outTradeNo = String(body?.out_trade_no || '').trim();
+  if (!outTradeNo) {
+    res.status(200).send('fail');
+    return;
+  }
+  const aliCfg = await readAlipayConfig();
+  if (!aliCfg.appId || !aliCfg.privateKey || !aliCfg.alipayPublicKey) {
+    res.status(200).send('fail');
+    return;
+  }
+  const alipay = createAlipayClient(aliCfg);
+  const verified = alipay.checkNotifySignV2(body);
+  if (!verified) {
+    res.status(200).send('fail');
+    return;
+  }
+  const order = await MemberOrder.findOne({ where: { order_no: outTradeNo } as any }).catch(() => null as any);
+  if (!order) {
+    res.status(200).send('success');
+    return;
+  }
+  const tradeStatus = String(body?.trade_status || '').trim();
+  const tradeNo = String(body?.trade_no || '').trim();
+  const totalAmount = Number(body?.total_amount || 0);
+  const orderAmount = Number((order as any).amount_yuan || 0);
+  if (Number.isFinite(totalAmount) && Number.isFinite(orderAmount) && Math.abs(totalAmount - orderAmount) > 0.01) {
+    await (order as any).update({
+      status: 'failed',
+      ext_json: JSON.stringify({ channel: 'alipay', stage: 'amount_mismatch', totalAmount, orderAmount }),
+    });
+    res.status(200).send('fail');
+    return;
+  }
+  if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
+    if (String((order as any).status || '') !== 'fulfilled') {
+      const uid = Number((order as any).user_id || 0);
+      const planCode = String((order as any).plan_code || '').trim();
+      const scopeValue = String((order as any).scope_value || '').trim();
+      const user = await applyPaidMemberOrder(uid, planCode, scopeValue);
+      await (order as any).update({
+        source: 'alipay',
+        payment_tx_no: tradeNo || String((order as any).payment_tx_no || ''),
+        status: 'fulfilled',
+        paid_at: new Date(),
+        fulfilled_at: new Date(),
+        ext_json: JSON.stringify({ channel: 'alipay', stage: 'paid', tradeStatus, tradeNo }),
+      });
+      if (uid && planCode) await settleFirstPurchaseReward(uid, planCode);
+      if (!user) {
+        res.status(200).send('fail');
+        return;
+      }
+    }
+    res.status(200).send('success');
+    return;
+  }
+  if (tradeStatus === 'TRADE_CLOSED') {
+    await (order as any).update({
+      status: 'failed',
+      source: 'alipay',
+      payment_tx_no: tradeNo || String((order as any).payment_tx_no || ''),
+      ext_json: JSON.stringify({ channel: 'alipay', stage: 'closed', tradeStatus, tradeNo }),
+    });
+    res.status(200).send('success');
+    return;
+  }
+  res.status(200).send('success');
+});
+
 router.post('/purchase', authenticateToken, async (req: Request, res: Response) => {
   try { await ensureSeedOnce(); } catch (e) {}
   const uid = (req as any).user?.id;
   const planCode = String(req.body?.planCode || '').trim();
   const scopeValue = String(req.body?.scopeValue || '').trim();
+  const payMethod = String(req.body?.payMethod || 'mock').trim().toLowerCase();
+  const methodMap: Record<string, string> = {
+    wechat: 'wechat',
+    alipay: 'alipay',
+    bank_transfer: 'bank_transfer',
+    mock: 'manual_mock',
+  };
+  const channel = methodMap[payMethod] || 'manual_mock';
+  if (channel === 'alipay') {
+    res.status(400).json({ code: 0, msg: '请使用支付宝下单接口' });
+    return;
+  }
   if (!['city', 'province', 'country'].includes(planCode)) {
     res.status(400).json({ code: 0, msg: 'Invalid planCode' });
     return;
@@ -474,11 +872,11 @@ router.post('/purchase', authenticateToken, async (req: Request, res: Response) 
     plan_code: planCode,
     scope_value: nextScope,
     amount_yuan: Number.isFinite(amountYuan) ? amountYuan.toFixed(2) : '0.00',
-    source: 'purchase',
+    source: channel === 'manual_mock' ? 'purchase' : channel,
     status: 'fulfilled',
     paid_at: new Date(),
     fulfilled_at: new Date(),
-    ext_json: JSON.stringify({ channel: 'manual_mock' }),
+    ext_json: JSON.stringify({ channel, payMethod: channel }),
   } as any);
   await settleFirstPurchaseReward(Number(uid), planCode);
   res.json({ code: 1, msg: 'success', data: normalizeVip(user as any) });

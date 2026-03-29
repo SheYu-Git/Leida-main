@@ -92,14 +92,14 @@ router.get('/me', async (req, res) => {
       id: Number((user as any).id || 0),
       username: String((user as any).username || ''),
       role: String((user as any).role || 'user'),
-      requiresPin: String((user as any).role || '') === 'superadmin',
+      requiresPin: true,
       customPermissions: customPerms,
       effectivePermissions: effectivePerms,
     },
   });
 });
 
-router.post('/pin/verify', requireSuperAdmin, async (req, res) => {
+router.post('/pin/verify', requireAdminRole, async (req, res) => {
   const pin = String(req.body?.pin || '');
   if (!pin) {
     res.status(400).json({ code: 0, msg: '请输入PIN码' });
@@ -116,7 +116,7 @@ router.post('/pin/verify', requireSuperAdmin, async (req, res) => {
   res.json({ code: 1, msg: 'success', data: { pinToken } });
 });
 
-router.post('/pin/change', requireSuperAdmin, requireAdminPinVerified, async (req, res) => {
+router.post('/pin/change', requireAdminRole, async (req, res) => {
   const oldPin = String(req.body?.oldPin || '');
   const newPin = String(req.body?.newPin || '');
   if (!/^\d{6}$/.test(newPin)) {
@@ -125,7 +125,7 @@ router.post('/pin/change', requireSuperAdmin, requireAdminPinVerified, async (re
   }
   const user = (req as any).adminUser as any;
   const pinHash = String(user.admin_pin_hash || '');
-  const oldOk = pinHash ? await bcrypt.compare(oldPin, pinHash) : false;
+  const oldOk = pinHash ? await bcrypt.compare(oldPin, pinHash) : true;
   if (!oldOk) {
     res.status(400).json({ code: 0, msg: '原PIN码错误' });
     return;
@@ -478,6 +478,93 @@ router.get('/members', requireAdminPermission('member.read'), async (req, res) =
       })),
     },
   });
+});
+
+router.post('/members/:id/reset-password', requireAdminPermission('member.write'), async (req, res) => {
+  const userId = Number(req.params.id || 0);
+  const newPassword = String(req.body?.newPassword || '');
+  if (!userId || newPassword.length < 6) {
+    res.status(400).json({ code: 0, msg: '参数无效' });
+    return;
+  }
+  const user = await User.findByPk(userId);
+  if (!user) {
+    res.status(404).json({ code: 0, msg: '用户不存在' });
+    return;
+  }
+  const nextHash = await bcrypt.hash(newPassword, 10);
+  await (user as any).update({ password: nextHash });
+  await AdminAuditLog.create({
+    admin_user_id: Number((req as any).adminUser?.id || 0),
+    module: 'member',
+    action: 'reset_password',
+    target_key: String(userId),
+    before_json: '{}',
+    after_json: JSON.stringify({ reset: true }),
+  } as any);
+  res.json({ code: 1, msg: 'success' });
+});
+
+router.post('/users/:id/reset-password', requireAdminPermission('member.write'), async (req, res) => {
+  const userId = Number(req.params.id || 0);
+  const newPassword = String(req.body?.newPassword || '');
+  if (!userId || newPassword.length < 6) {
+    res.status(400).json({ code: 0, msg: '参数无效' });
+    return;
+  }
+  const user = await User.findByPk(userId);
+  if (!user) {
+    res.status(404).json({ code: 0, msg: '用户不存在' });
+    return;
+  }
+  const nextHash = await bcrypt.hash(newPassword, 10);
+  await (user as any).update({ password: nextHash });
+  await AdminAuditLog.create({
+    admin_user_id: Number((req as any).adminUser?.id || 0),
+    module: 'member',
+    action: 'reset_password',
+    target_key: String(userId),
+    before_json: '{}',
+    after_json: JSON.stringify({ reset: true, via: 'users_path' }),
+  } as any);
+  res.json({ code: 1, msg: 'success' });
+});
+
+router.delete('/members/:id', requireAdminPinVerified, requireAdminPermission('member.write'), async (req, res) => {
+  const userId = Number(req.params.id || 0);
+  if (!userId) {
+    res.status(400).json({ code: 0, msg: '参数无效' });
+    return;
+  }
+  const actorId = Number((req as any).adminUser?.id || 0);
+  if (actorId && actorId === userId) {
+    res.status(400).json({ code: 0, msg: '不能删除当前登录账号' });
+    return;
+  }
+  const user = await User.findByPk(userId);
+  if (!user) {
+    res.status(404).json({ code: 0, msg: '用户不存在' });
+    return;
+  }
+  if (String((user as any).role || '') === 'superadmin') {
+    res.status(400).json({ code: 0, msg: '不能删除超级管理员' });
+    return;
+  }
+  const before = {
+    username: String((user as any).username || ''),
+    role: String((user as any).role || 'user'),
+    vipLevel: String((user as any).vip_level || 'free'),
+  };
+  await (user as any).destroy();
+  await AdminAuditLog.create({
+    admin_user_id: actorId,
+    module: 'member',
+    action: 'delete_user',
+    target_key: String(userId),
+    before_json: JSON.stringify(before),
+    after_json: '{}',
+  } as any);
+  res.json({ code: 1, msg: 'success' });
 });
 
 router.post('/members/:id/vip/grant', requireAdminPinVerified, requireAdminPermission('member.write'), async (req, res) => {

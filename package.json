@@ -7,15 +7,18 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check:rds": "tsx scripts/check_rds_connectivity.ts"
+    "check:rds": "tsx scripts/check_rds_connectivity.ts",
+    "postinstall": "node scripts/patch_iap_plugin.mjs"
   },
   "dependencies": {
+    "@adplorg/capacitor-in-app-purchase": "^2.0.64",
     "@capacitor/app": "^8.0.1",
     "@capacitor/browser": "^8.0.2",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/ios": "^8.2.0",
     "@capacitor/local-notifications": "^8.0.2",
+    "alipay-sdk": "^4.14.0",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",

@@ -76,7 +76,7 @@ export const writeHomeCachePage = async () => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>招投标雷达 · 缓存页</title>
+  <title>商机雷达 · 缓存页</title>
   <style>
     body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial; background:#f6f7fb;color:#111}
     .wrap{max-width:860px;margin:0 auto;padding:14px 12px 28px}

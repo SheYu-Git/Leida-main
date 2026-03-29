@@ -47,9 +47,15 @@ const App = {
             inviteCode: '',
             invitedCount: 0,
             inviteRewardTotal: 0,
-            referralRecords: []
+            referralRecords: [],
+            iapReferenceUuid: '',
+            trialUsage: { city: false, province: false, country: false }
         },
         memberPlans: [],
+        memberPayDraft: null,
+        memberPurchasePlan: 'city',
+        memberPurchaseMethod: 'wechat',
+        appleIapPriceMap: {},
         runtimeConfig: {},
         adminDrawerOpen: false,
         adminPanelOpen: false,
@@ -348,6 +354,14 @@ const App = {
         window.logout = this.logout.bind(this);
         window.activateMember = this.activateMember.bind(this);
         window.buyMember = this.buyMember.bind(this);
+        window.openMemberPayDialog = this.openMemberPayDialog.bind(this);
+        window.selectMemberPurchasePlan = this.selectMemberPurchasePlan.bind(this);
+        window.selectMemberPurchaseMethod = this.selectMemberPurchaseMethod.bind(this);
+        window.submitMemberPurchase = this.submitMemberPurchase.bind(this);
+        window.closeMemberPayDialog = this.closeMemberPayDialog.bind(this);
+        window.selectMemberPayMethod = this.selectMemberPayMethod.bind(this);
+        window.submitMemberTransferPaid = this.submitMemberTransferPaid.bind(this);
+        window.copyMemberTransferInfo = this.copyMemberTransferInfo.bind(this);
         window.shareInviteLink = this.shareInviteLink.bind(this);
         window.openReferralRecords = this.openReferralRecords.bind(this);
         window.openAdminDrawer = this.openAdminDrawer.bind(this);
@@ -382,6 +396,8 @@ const App = {
         window.toggleAdminActivationCode = this.toggleAdminActivationCode.bind(this);
         window.batchCreateActivationCodes = this.batchCreateActivationCodes.bind(this);
         window.grantMemberVip = this.grantMemberVip.bind(this);
+        window.resetAdminMemberPassword = this.resetAdminMemberPassword.bind(this);
+        window.deleteAdminMember = this.deleteAdminMember.bind(this);
         window.grantAdminRole = this.grantAdminRole.bind(this);
         window.closeRuntimeNotice = this.closeRuntimeNotice.bind(this);
         window.switchBanner = this.switchBanner.bind(this);
@@ -506,7 +522,7 @@ const App = {
                     this.checkSubPushAndNotify();
                 } else {
                     this.openSystemNotifySettings();
-                    alert('未开启通知。请到：设置 → 通知 → 招投标雷达APP 开启“允许通知”。');
+                    alert('未开启通知。请到：设置 → 通知 → 商机雷达 开启“允许通知”。');
                 }
             });
         }, { passive: true });
@@ -743,7 +759,7 @@ const App = {
         try {
             if (kind === 'custom' && plugin && typeof plugin.notify === 'function') {
                 const ret = await plugin.notify({
-                    title: String(title || '招投标雷达'),
+                    title: String(title || '商机雷达'),
                     body: String(body || ''),
                     id: String(id || '')
                 });
@@ -754,7 +770,7 @@ const App = {
                 await plugin.schedule({
                     notifications: [{
                         id: numId,
-                        title: String(title || '招投标雷达'),
+                        title: String(title || '商机雷达'),
                         body: String(body || ''),
                         schedule: { at: new Date(Date.now() + 1000) }
                     }]
@@ -912,13 +928,13 @@ const App = {
                 subtitle: String((x && x.subtitle) || '').trim(),
             }))
             .map((x) => ({
-                title: x.title === '招投标雷达' ? '招投标雷达APP' : x.title,
+                title: x.title === '商机雷达' ? '商机雷达' : x.title,
                 subtitle: x.subtitle,
             }))
             .filter((x) => x.title || x.subtitle);
         if (cleaned.length) return cleaned;
         return [
-            { title: '招投标雷达APP', subtitle: 'AI数字员工24小时为您寻找商机！' },
+            { title: '商机雷达', subtitle: 'AI数字员工24小时为您寻找商机！' },
             { title: '精准商机订阅', subtitle: '关键词+地区，实时推送不漏标' },
         ];
     },
@@ -1545,7 +1561,23 @@ const App = {
             try { text = await resp.text(); } catch (e) {}
             json = text;
         }
-        return { ok: resp.ok, status: resp.status, json, text, contentType };
+        const result = { ok: resp.ok, status: resp.status, json, text, contentType };
+        const pinMsg = String((json && (json.msg || json.message)) || '');
+        const hasPinHeader = !!(headers['x-admin-pin-token'] || headers['X-Admin-Pin-Token']);
+        const isPinVerifyApi = /\/api\/admin\/pin\/verify(?:\?|$)/.test(String(url || ''));
+        const pinExpired = Number(resp.status || 0) === 401 && /PIN验证已失效|需要PIN二次验证|pin/i.test(pinMsg);
+        if (pinExpired && hasPinHeader && !isPinVerifyApi && !options.__adminPinRetried) {
+            const repin = prompt('PIN已过期，请重新输入PIN码');
+            if (repin) {
+                const ret = await this.verifyAdminPin(String(repin).trim());
+                if (ret.ok) {
+                    const retryHeaders = Object.assign({}, options.headers || {}, this.getAdminAuthHeaders());
+                    return await this.requestJson(url, Object.assign({}, options, { headers: retryHeaders, __adminPinRetried: true }));
+                }
+                this.showToast(ret.msg || 'PIN验证失败');
+            }
+        }
+        return result;
     },
 
     sortRowsByDatetimeDesc(rows = []) {
@@ -2272,9 +2304,17 @@ const App = {
             const syncMeta = json.syncMeta || { actionAt: Date.now(), successAt: Date.now() };
             this.state.backendSyncActionAt = syncMeta.actionAt || Date.now();
             this.state.backendSyncSuccessAt = syncMeta.successAt || this.state.backendSyncActionAt;
-            this.state.backendLatestDataAt = Number(syncMeta.latestDataAt || this.state.backendLatestDataAt || 0);
-            this.state.backendSyncAlertActive = !!syncMeta.alertActive;
-            this.state.backendSyncAlertReason = String(syncMeta.alertReason || '');
+            const staleHoursRaw = Number(syncMeta.staleAlertHours || this.state.dataStaleAlertHours || 24);
+            const staleHours = Number.isFinite(staleHoursRaw) && staleHoursRaw > 0 ? staleHoursRaw : 24;
+            this.state.dataStaleAlertHours = staleHours;
+            const latestDataAt = Number(syncMeta.latestDataAt || this.state.backendLatestDataAt || 0);
+            this.state.backendLatestDataAt = latestDataAt;
+            const latestDataLagMin = Number(syncMeta.latestDataLagMin || (latestDataAt ? Math.max(0, Math.floor((Date.now() - latestDataAt) / 60000)) : -1));
+            const dataStale = syncMeta.dataStale != null ? !!syncMeta.dataStale : (!latestDataAt || latestDataLagMin >= staleHours * 60);
+            const backendAlertActive = !!syncMeta.alertActive;
+            const backendAlertReason = String(syncMeta.alertReason || '');
+            this.state.backendSyncAlertActive = backendAlertActive || dataStale;
+            this.state.backendSyncAlertReason = backendAlertReason || (dataStale ? `数据未更新超过${staleHours}小时` : '');
             if (json.statsMeta && json.statsMeta.text) {
                 this.state.homeStatsText = json.statsMeta.text;
                 this.state.homeStatsAt = Date.now();
@@ -2434,36 +2474,39 @@ const App = {
         const unavailable = !isStarting && !hasSyncTime && !hasApiTime && !hasVisibleData;
         const alertActive = !!this.state.backendSyncAlertActive;
         const alertReason = String(this.state.backendSyncAlertReason || '');
+        const showAlert = this.isAdminUser();
+        const visibleAlertActive = showAlert && alertActive;
+        const visibleAlertReason = showAlert ? alertReason : '';
         const bg = unavailable
             ? 'rgba(255,59,48,0.12)'
-            : (alertActive
+            : (visibleAlertActive
                 ? 'rgba(255,59,48,0.12)'
                 : (synced
                     ? 'rgba(52,199,89,0.12)'
                     : (isStarting ? 'rgba(74,144,226,0.12)' : (isOfflineSource ? 'rgba(108,117,125,0.14)' : 'rgba(255,149,0,0.14)'))));
         const color = unavailable
             ? '#D74A41'
-            : (alertActive
+            : (visibleAlertActive
                 ? '#D74A41'
                 : (synced
                     ? '#1E9D4A'
                     : (isStarting ? '#2F6FB3' : (isOfflineSource ? '#5C6067' : '#D26D00'))));
         const border = unavailable
             ? 'rgba(255,59,48,0.35)'
-            : (alertActive
+            : (visibleAlertActive
                 ? 'rgba(255,59,48,0.35)'
                 : (synced
                     ? 'rgba(52,199,89,0.35)'
                     : (isStarting ? 'rgba(74,144,226,0.35)' : (isOfflineSource ? 'rgba(108,117,125,0.36)' : 'rgba(255,149,0,0.38)'))));
         const status = unavailable
             ? '未连接'
-            : (alertActive ? '告警' : (isStarting ? '连接中' : (isOfflineSource ? '缓存模式' : '在线')));
+            : (visibleAlertActive ? '告警' : (isStarting ? '连接中' : (isOfflineSource ? '缓存模式' : '在线')));
         const src = srcKey === 'remote'
             ? '远端'
             : (srcKey === 'local' ? '云端' : (srcKey === 'static' ? '静态' : ''));
         const top = (this.state.lastTopId || '').trim();
         const channel = src ? `API(${src}${top ? '·' + top : ''})` : 'API';
-        const alertSuffix = alertActive && alertReason ? ` · ${alertReason}` : '';
+        const alertSuffix = visibleAlertActive && visibleAlertReason ? ` · ${visibleAlertReason}` : '';
         return `<div style="margin: 6px 16px 8px 16px; display: flex; justify-content: center;">
             <span style="display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; background: ${bg}; color: ${color}; border: 1px solid ${border};">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 5px;"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10"></path><path d="M20.49 15a9 9 0 0 1-14.13 3.36L1 14"></path></svg>
@@ -2541,9 +2584,17 @@ const App = {
                 const syncMeta = json.syncMeta || { actionAt: Date.now(), successAt: Date.now() };
                 this.state.backendSyncActionAt = syncMeta.actionAt || Date.now();
                 this.state.backendSyncSuccessAt = syncMeta.successAt || this.state.backendSyncActionAt;
-                this.state.backendLatestDataAt = Number(syncMeta.latestDataAt || this.state.backendLatestDataAt || 0);
-                this.state.backendSyncAlertActive = !!syncMeta.alertActive;
-                this.state.backendSyncAlertReason = String(syncMeta.alertReason || '');
+                const staleHoursRaw = Number(syncMeta.staleAlertHours || this.state.dataStaleAlertHours || 24);
+                const staleHours = Number.isFinite(staleHoursRaw) && staleHoursRaw > 0 ? staleHoursRaw : 24;
+                this.state.dataStaleAlertHours = staleHours;
+                const latestDataAt = Number(syncMeta.latestDataAt || this.state.backendLatestDataAt || 0);
+                this.state.backendLatestDataAt = latestDataAt;
+                const latestDataLagMin = Number(syncMeta.latestDataLagMin || (latestDataAt ? Math.max(0, Math.floor((Date.now() - latestDataAt) / 60000)) : -1));
+                const dataStale = syncMeta.dataStale != null ? !!syncMeta.dataStale : (!latestDataAt || latestDataLagMin >= staleHours * 60);
+                const backendAlertActive = !!syncMeta.alertActive;
+                const backendAlertReason = String(syncMeta.alertReason || '');
+                this.state.backendSyncAlertActive = backendAlertActive || dataStale;
+                this.state.backendSyncAlertReason = backendAlertReason || (dataStale ? `数据未更新超过${staleHours}小时` : '');
                 if (json.statsMeta && json.statsMeta.text) {
                     this.state.homeStatsText = json.statsMeta.text;
                     this.state.homeStatsAt = Date.now();
@@ -2645,12 +2696,26 @@ const App = {
             contentArea.style.marginRight = '0';
             contentArea.classList.add('member-fullbleed');
             
-            contentArea.innerHTML = this.getMemberCenterHTML();
+            try {
+                contentArea.innerHTML = this.getMemberCenterHTML();
+            } catch (e) {
+                const errText = String((e && e.message) || e || '未知错误');
+                contentArea.innerHTML = `<div style="padding:16px;"><div style="background:#fff;border-radius:12px;padding:16px;color:#333;">会员中心加载失败：${errText}</div></div>`;
+                console.error('member center render error', e);
+            }
             if (this.state.user && this.state.user.isLogged) {
                 this.syncReferralFromServer().then(() => {
                     if (this.state.currentTab === 2) {
                         const c = document.getElementById('content-area');
-                        if (c) c.innerHTML = this.getMemberCenterHTML();
+                        if (c) {
+                            try {
+                                c.innerHTML = this.getMemberCenterHTML();
+                            } catch (e) {
+                                const errText = String((e && e.message) || e || '未知错误');
+                                c.innerHTML = `<div style="padding:16px;"><div style="background:#fff;border-radius:12px;padding:16px;color:#333;">会员中心加载失败：${errText}</div></div>`;
+                                console.error('member center rerender error', e);
+                            }
+                        }
                     }
                 });
             }
@@ -2746,8 +2811,30 @@ const App = {
 
     // --- Access Control Logic ---
 
+    getMemberPermissionMatrix() {
+        const cfg = (this.state.runtimeConfig && this.state.runtimeConfig['member.permission.matrix']) || {};
+        const normNum = (v, d) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : d;
+        };
+        const norm = (obj, fallback) => ({
+            scope: String((obj && obj.scope) || fallback.scope),
+            viewLimit: normNum(obj && obj.viewLimit, fallback.viewLimit),
+            keywordLimit: Math.max(0, normNum(obj && obj.keywordLimit, fallback.keywordLimit)),
+            deviceLimit: Math.max(1, normNum(obj && obj.deviceLimit, fallback.deviceLimit)),
+            serviceCount: Math.max(0, normNum(obj && obj.serviceCount, fallback.serviceCount)),
+        });
+        return {
+            free: norm(cfg.free, { scope: '体验', viewLimit: 10, keywordLimit: 1, deviceLimit: 1, serviceCount: 0 }),
+            city: norm(cfg.city, { scope: '城市', viewLimit: 100, keywordLimit: 10, deviceLimit: 2, serviceCount: 1 }),
+            province: norm(cfg.province, { scope: '全省', viewLimit: 500, keywordLimit: 50, deviceLimit: 5, serviceCount: 3 }),
+            country: norm(cfg.country, { scope: '全国', viewLimit: -1, keywordLimit: 200, deviceLimit: 10, serviceCount: 5 }),
+        };
+    },
+
     checkViewPermission(item) {
         const user = this.state.user;
+        const matrix = this.getMemberPermissionMatrix();
         if (!user.isLogged) {
             if (user.viewUsage < 3) {
                 return { allowed: true, type: 'limited', remaining: 3 - user.viewUsage, limit: 3, isGuest: true };
@@ -2772,10 +2859,11 @@ const App = {
                 return { allowed: true };
             }
             // Out of Scope: Limit 500
-            if (user.viewUsage < 500) {
-                return { allowed: true, type: 'limited', remaining: 500 - user.viewUsage, limit: 500 };
+            const limit = Number(matrix.province.viewLimit || 500);
+            if (limit < 0 || user.viewUsage < limit) {
+                return { allowed: true, type: 'limited', remaining: limit < 0 ? -1 : (limit - user.viewUsage), limit };
             } else {
-                return { allowed: false, message: '跨省浏览额度已用完（500条），请升级全国会员。' };
+                return { allowed: false, message: `跨省浏览额度已用完（${limit}条），请升级全国会员。` };
             }
         }
         
@@ -2786,19 +2874,21 @@ const App = {
                 return { allowed: true };
             }
             // Out of Scope: Limit 100
-            if (user.viewUsage < 100) {
-                return { allowed: true, type: 'limited', remaining: 100 - user.viewUsage, limit: 100 };
+            const limit = Number(matrix.city.viewLimit || 100);
+            if (limit < 0 || user.viewUsage < limit) {
+                return { allowed: true, type: 'limited', remaining: limit < 0 ? -1 : (limit - user.viewUsage), limit };
             } else {
-                return { allowed: false, message: '跨市浏览额度已用完（100条），请升级会员。' };
+                return { allowed: false, message: `跨市浏览额度已用完（${limit}条），请升级会员。` };
             }
         }
         
         // Free Member (Default)
         // Limit 10 (Lifetime)
-        if (user.viewUsage < 10) {
-            return { allowed: true, type: 'limited', remaining: 10 - user.viewUsage, limit: 10, isFree: true };
+        const freeLimit = Math.max(0, Number(matrix.free.viewLimit || 10));
+        if (user.viewUsage < freeLimit) {
+            return { allowed: true, type: 'limited', remaining: freeLimit - user.viewUsage, limit: freeLimit, isFree: true };
         } else {
-            return { allowed: false, message: '免费额度已用完（终身10条），请升级会员以无限浏览。' };
+            return { allowed: false, message: `免费额度已用完（终身${freeLimit}条），请升级会员以无限浏览。` };
         }
     },
 
@@ -3098,6 +3188,15 @@ const App = {
                     /* Hide empty elements */
                     #detail-body p:empty, #detail-body div:empty {
                         display: none;
+                    }
+
+                    #detail-body .card,
+                    #detail-body .card:hover,
+                    #detail-body .card:active {
+                        box-shadow: none !important;
+                        transform: none !important;
+                        transition: none !important;
+                        -webkit-tap-highlight-color: transparent !important;
                     }
 
                     /* Enforce font size to match Purchasing Unit */
@@ -4195,11 +4294,12 @@ const App = {
         const user = this.state.user;
         const level = user.vipLevel || 'free';
         const currentCount = window.SubManager.getSubs().length;
+        const matrix = this.getMemberPermissionMatrix();
         
-        let limit = 1; // Default Free
-        if (level === 'city') limit = 10;
-        else if (level === 'province') limit = 50;
-        else if (level === 'country') limit = 200;
+        let limit = Math.max(0, Number(matrix.free.keywordLimit || 1));
+        if (level === 'city') limit = Math.max(0, Number(matrix.city.keywordLimit || 10));
+        else if (level === 'province') limit = Math.max(0, Number(matrix.province.keywordLimit || 50));
+        else if (level === 'country') limit = Math.max(0, Number(matrix.country.keywordLimit || 200));
         
         if (currentCount >= limit) {
             return { allowed: false, message: `已达关键词上限（${limit}个），请升级会员。` };
@@ -4508,7 +4608,7 @@ const App = {
             else if (user.vipLevel === 'province') memberTitle = '省级会员';
             else if (user.vipLevel === 'country') memberTitle = '全国会员';
         }
-        const headerTitle = user.isLogged ? `${memberTitle}${user.username || '用户'}的订阅` : '我的订阅日历';
+        const headerTitle = user.isLogged ? `${memberTitle}${user.username || '用户'}的商机` : '我的商机日历';
         const headerAction = user.isLogged ? 'showAddSubDialog()' : 'login()';
 
         let html = `
@@ -5626,7 +5726,9 @@ const App = {
             inviteCode: '',
             invitedCount: 0,
             inviteRewardTotal: 0,
-            referralRecords: []
+            referralRecords: [],
+            iapReferenceUuid: '',
+            trialUsage: { city: false, province: false, country: false }
         };
     },
     
@@ -5791,6 +5893,12 @@ const App = {
         const vipScopeValue = u.vipScopeValue || u.vip_scope_value || base.vipScopeValue || '';
         const profileCompletion = u.profileCompletion || u.profile_completion || base.profileCompletion || null;
         const profileRewardConfig = u.profileRewardConfig || u.profile_reward_config || base.profileRewardConfig || null;
+        const trialUsageRaw = u.trialUsage || u.trial_usage || base.trialUsage || {};
+        const trialUsage = {
+            city: !!trialUsageRaw.city,
+            province: !!trialUsageRaw.province,
+            country: !!trialUsageRaw.country
+        };
         this.state.user = {
             isLogged: true,
             userId,
@@ -5816,7 +5924,9 @@ const App = {
             profileCompletion,
             profileRewardConfig,
             profileRewardGrantedAt: String(u.profileRewardGrantedAt || u.profile_reward_granted_at || base.profileRewardGrantedAt || ''),
-            referralRecords: Array.isArray(base.referralRecords) ? base.referralRecords : []
+            referralRecords: Array.isArray(base.referralRecords) ? base.referralRecords : [],
+            iapReferenceUuid: String(u.iapReferenceUuid || u.iap_reference_uuid || base.iapReferenceUuid || ''),
+            trialUsage
         };
         this.saveLocalProfileDraft({ companyName: this.state.user.companyName, realName: this.state.user.realName, positionTitle: this.state.user.positionTitle, phone: this.state.user.phone, email: this.state.user.email, wechatId: this.state.user.wechatId }, this.state.user);
         this.saveUser();
@@ -5840,6 +5950,7 @@ const App = {
             }
             if (user && data && data.profileCompletion) user.profileCompletion = data.profileCompletion;
             if (user && data && data.profileRewardConfig) user.profileRewardConfig = data.profileRewardConfig;
+            if (user && data && data.trialUsage) user.trialUsage = data.trialUsage;
             const plans = (data && data.plans) || (json && json.plans) || [];
             if (res.ok && user) {
                 this.applyServerUser(user);
@@ -6129,9 +6240,18 @@ const App = {
                     body: { username, password, nickname: username, inviteCode }
                 });
                 if (res.ok && res.json && (res.json.success || res.json.user)) {
+                    if (inviteInput) inviteInput.value = '';
+                    const loginRes = await this.requestJson(`${apiBase}/api/auth/login`, {
+                        method: 'POST',
+                        body: { username, password }
+                    });
+                    if (loginRes.ok && loginRes.json && loginRes.json.token) {
+                        await this.applyLoginSuccess(loginRes.json, username, password);
+                        this.showToast('注册并登录成功');
+                        return;
+                    }
                     this.showToast('注册成功，请登录');
                     this.switchAuthMode('login');
-                    if (inviteInput) inviteInput.value = '';
                     return;
                 }
                 const rawMsg = (res.json && (res.json.message || res.json.msg)) || '注册失败';
@@ -6145,12 +6265,37 @@ const App = {
             
         } else {
             try {
-                const res = await this.requestJson(`${apiBase}/api/auth/login`, {
-                    method: 'POST',
-                    body: { username, password }
-                });
-                if (res.ok && res.json && res.json.token) return await this.applyLoginSuccess(res.json, username, password);
-                this.showToast((res.json && (res.json.message || res.json.msg)) || '登录失败');
+                const tryLogins = [username];
+                const lower = username.toLowerCase();
+                if (lower && lower !== username) tryLogins.push(lower);
+                let lastMsg = '登录失败';
+                for (const loginName of tryLogins) {
+                    const res = await this.requestJson(`${apiBase}/api/auth/login`, {
+                        method: 'POST',
+                        body: { username: loginName, password }
+                    });
+                    if (res.ok && res.json && res.json.token) return await this.applyLoginSuccess(res.json, loginName, password);
+                    lastMsg = (res.json && (res.json.message || res.json.msg)) || lastMsg;
+                }
+                const mayInvalid = /invalid credentials|用户名或密码|账号或密码|密码错误/i.test(String(lastMsg || ''));
+                if (mayInvalid) {
+                    const reg = await this.requestJson(`${apiBase}/api/auth/register`, {
+                        method: 'POST',
+                        body: { username, password, nickname: username }
+                    });
+                    if (reg.ok && reg.json && (reg.json.success || reg.json.user)) {
+                        const retry = await this.requestJson(`${apiBase}/api/auth/login`, {
+                            method: 'POST',
+                            body: { username, password }
+                        });
+                        if (retry.ok && retry.json && retry.json.token) {
+                            await this.applyLoginSuccess(retry.json, username, password);
+                            this.showToast('账号已自动创建并登录');
+                            return;
+                        }
+                    }
+                }
+                this.showToast(lastMsg);
             } catch (e) {
                 this.showToast('登录失败');
             }
@@ -6181,7 +6326,7 @@ const App = {
     
     async activateMember() {
         if (!this.state.user.isLogged) {
-            alert('请先登录');
+            this.showToast('请先登录');
             this.login();
             return;
         }
@@ -6217,52 +6362,277 @@ const App = {
         }
     },
     
-    async buyMember(level, price) {
-        if (!this.state.user.isLogged) {
-            alert('请先登录');
-            this.login();
+    getMemberPlanByCode(level) {
+        const rows = Array.isArray(this.state.memberPlans) ? this.state.memberPlans : [];
+        return rows.find((p) => String((p && (p.code || p.planCode)) || '').trim() === String(level || '').trim()) || null;
+    },
+
+    getIapPlugin() {
+        return window.Capacitor && window.Capacitor.Plugins ? window.Capacitor.Plugins.CapacitorInAppPurchase : null;
+    },
+
+    canUseAppleIap(plan) {
+        if (!this.isNativeAppRuntime()) return false;
+        const plugin = this.getIapPlugin();
+        if (!plugin) return false;
+        const productId = String((plan && (plan.appleProductId || plan.apple_product_id)) || '').trim();
+        return !!productId;
+    },
+
+    getPaymentRuntimeConfig() {
+        const cfg = (this.state.runtimeConfig && this.state.runtimeConfig['payment.channels']) || {};
+        return {
+            wechatEnabled: cfg.wechatEnabled !== false,
+            alipayEnabled: cfg.alipayEnabled !== false,
+            transferEnabled: cfg.transferEnabled !== false,
+            wechatLabel: String(cfg.wechatLabel || '微信支付'),
+            alipayLabel: String(cfg.alipayLabel || '支付宝支付'),
+            transferLabel: String(cfg.transferLabel || '对公转账'),
+            wechatAppId: String(cfg.wechatAppId || ''),
+            wechatMchId: String(cfg.wechatMchId || ''),
+            wechatApiKey: String(cfg.wechatApiKey || ''),
+            alipayAppId: String(cfg.alipayAppId || ''),
+            alipaySellerId: String(cfg.alipaySellerId || ''),
+            alipayPublicKey: String(cfg.alipayPublicKey || ''),
+            transferCompanyName: String(cfg.transferCompanyName || '舍予基业（珠海）控股集团有限公司'),
+            transferTaxNo: String(cfg.transferTaxNo || '91440400MABMPMTK15'),
+            transferAddress: String(cfg.transferAddress || '珠海市香洲区宝成路7号6栋2718房'),
+            transferPhone: String(cfg.transferPhone || '18607560510'),
+            transferBank: String(cfg.transferBank || '中国建设银行股份有限公司珠海横琴金融街支行'),
+            transferAccount: String(cfg.transferAccount || '44050164005209668888'),
+        };
+    },
+
+    getCorporateTransferInfo() {
+        const p = this.getPaymentRuntimeConfig();
+        return {
+            companyName: p.transferCompanyName,
+            taxNo: p.transferTaxNo,
+            address: p.transferAddress,
+            phone: p.transferPhone,
+            bank: p.transferBank,
+            account: p.transferAccount,
+        };
+    },
+
+    closeMemberPayDialog() {
+        const root = document.getElementById('member-pay-root');
+        if (root) {
+            root.remove();
             return;
         }
-        
-        if (confirm(`确认支付 ¥${price} 开通${level === 'city' ? '城市' : level === 'province' ? '省级' : '全国'}会员吗？(模拟支付)`)) {
-            const apiBase = this.getApiBase();
-            const province = this.getProvinceForCity(this.state.currentCity) || '';
-            const city = this.state.currentCity !== '全国' ? this.state.currentCity : '';
-            const scopeValue = level === 'city' ? city : level === 'province' ? province : '全国';
-            const localGrant = () => {
-                this.state.user.vipLevel = level;
-                this.state.user.vipScopeValue = scopeValue;
-                const date = new Date();
-                date.setFullYear(date.getFullYear() + 1);
-                this.state.user.vipExpire = date.toISOString().split('T')[0];
-                this.saveUser();
-                this.switchTab(2);
-                this.showToast('开通成功');
-            };
-            try {
-                const res = await this.requestJson(`${apiBase}/api/member/purchase`, {
+        const mask = document.getElementById('member-pay-mask');
+        const panel = document.getElementById('member-pay-panel');
+        if (mask) mask.remove();
+        if (panel) panel.remove();
+    },
+
+    openMemberPayDialog(level, price, scopeValue) {
+        this.closeMemberPayDialog();
+        this.state.memberPayDraft = {
+            level: String(level || ''),
+            price: Number(price || 0),
+            scopeValue: String(scopeValue || ''),
+        };
+        const transfer = this.getCorporateTransferInfo();
+        const payCfg = this.getPaymentRuntimeConfig();
+        const options = [];
+        if (payCfg.wechatEnabled) options.push(`<button onclick="selectMemberPayMethod('wechat')" style="border:none;background:#07C160;color:white;padding:8px 14px;border-radius:10px;font-weight:600;">${payCfg.wechatLabel}</button>`);
+        if (payCfg.alipayEnabled) options.push(`<button onclick="selectMemberPayMethod('alipay')" style="border:none;background:#1677FF;color:white;padding:8px 14px;border-radius:10px;font-weight:600;">${payCfg.alipayLabel}</button>`);
+        if (payCfg.transferEnabled) options.push(`<button onclick="selectMemberPayMethod('bank_transfer')" style="border:none;background:#FF9500;color:white;padding:8px 14px;border-radius:10px;font-weight:600;">${payCfg.transferLabel}</button>`);
+        if (options.length === 0) {
+            this.showToast('未启用支付方式，请联系管理员');
+            return;
+        }
+        const root = document.createElement('div');
+        root.id = 'member-pay-root';
+        root.style.cssText = 'position:fixed;inset:0;z-index:9999;display:block;';
+        root.innerHTML = `
+            <div id="member-pay-mask" onclick="closeMemberPayDialog()" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;"></div>
+            <div id="member-pay-panel" style="position:fixed;left:0;right:0;bottom:0;z-index:9999;width:100%;max-width:680px;margin:0 auto;background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;overflow:hidden;box-shadow:0 -10px 30px rgba(0,0,0,0.2);padding-bottom:calc(max(env(safe-area-inset-bottom), 0px));">
+                <div class="city-selection-header" style="display:flex;align-items:center;padding:14px 16px 10px;border-bottom:1px solid #F0F1F3;">
+                    <span style="font-size:18px;font-weight:700;">选择支付方式</span>
+                    <span class="nav-right" onclick="closeMemberPayDialog()" style="position:static;margin-left:auto;">✕</span>
+                </div>
+                <div style="padding:14px 16px 18px 16px;max-height:58vh;overflow:auto;">
+                    <div style="font-size:13px;color:#666;margin-bottom:10px;">请选择你要使用的支付方式：</div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+                        ${options.join('')}
+                    </div>
+                    <div id="member-pay-transfer-box" style="display:none;background:#F7F8FA;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.6;color:#333;">
+                        <div>公司名：${transfer.companyName}</div>
+                        <div>纳税人识别号：${transfer.taxNo}</div>
+                        <div>地址：${transfer.address}</div>
+                        <div>电话：${transfer.phone}</div>
+                        <div>开户行：${transfer.bank}</div>
+                        <div>账号：${transfer.account}</div>
+                        <div style="display:flex;gap:8px;margin-top:10px;">
+                            <button onclick="copyMemberTransferInfo()" style="border:none;background:#4B5563;color:white;padding:6px 10px;border-radius:8px;">复制收款信息</button>
+                            <button onclick="submitMemberTransferPaid()" style="border:none;background:#FF9500;color:white;padding:6px 10px;border-radius:8px;">我已转账，提交开通</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const body = document.body || document.getElementById('content-area');
+        if (body && body.appendChild) body.appendChild(root);
+    },
+
+    async submitMemberPurchaseByMethod(payMethod) {
+        const draft = this.state.memberPayDraft || {};
+        const level = String(draft.level || '');
+        const scopeValue = String(draft.scopeValue || '');
+        if (!level) {
+            this.showToast('订单参数缺失');
+            return;
+        }
+        const apiBase = this.getApiBase();
+        if (!apiBase) {
+            this.showToast('未配置API地址');
+            return;
+        }
+        try {
+            if (payMethod === 'alipay') {
+                const res = await this.requestJson(`${apiBase}/api/member/alipay/create`, {
                     method: 'POST',
                     body: { planCode: level, scopeValue }
                 });
-                if (res.ok && res.json && res.json.code === 1 && res.json.data) {
-                    const d = res.json.data;
-                    this.state.user.vipLevel = d.vipLevel || this.state.user.vipLevel;
-                    this.state.user.vipScopeValue = d.vipScopeValue || this.state.user.vipScopeValue;
-                    this.state.user.vipExpire = this.normalizeVipExpireText(d.vipExpire || d.vip_expire_at || this.state.user.vipExpire || '');
-                    if (typeof d.balance === 'number') this.state.user.balance = d.balance;
-                    this.saveUser();
-                    this.switchTab(2);
-                    this.showToast('开通成功');
+                const payUrl = String((res.json && res.json.data && res.json.data.payUrl) || '').trim();
+                if (res.ok && res.json && res.json.code === 1 && payUrl) {
+                    this.closeMemberPayDialog();
+                    const opened = await this.openExternalUrl(payUrl);
+                    if (opened) this.showToast('已打开支付宝，请完成支付后返回');
                     return;
                 }
-                const msg = (res.json && (res.json.msg || res.json.message)) || '开通失败';
+                const msg = (res.json && (res.json.msg || res.json.message)) || '支付宝下单失败';
                 this.showToast(msg);
-                localGrant();
-            } catch (e) {
-                this.showToast('开通失败');
-                localGrant();
+                return;
             }
+            const res = await this.requestJson(`${apiBase}/api/member/purchase`, {
+                method: 'POST',
+                body: { planCode: level, scopeValue, payMethod }
+            });
+            if (res.ok && res.json && res.json.code === 1 && res.json.data) {
+                const d = res.json.data;
+                this.state.user.vipLevel = d.vipLevel || this.state.user.vipLevel;
+                this.state.user.vipScopeValue = d.vipScopeValue || this.state.user.vipScopeValue;
+                this.state.user.vipExpire = this.normalizeVipExpireText(d.vipExpire || d.vip_expire_at || this.state.user.vipExpire || '');
+                if (typeof d.balance === 'number') this.state.user.balance = d.balance;
+                this.saveUser();
+                this.switchTab(2);
+                this.closeMemberPayDialog();
+                this.showToast('开通成功');
+                return;
+            }
+            const msg = (res.json && (res.json.msg || res.json.message)) || '开通失败';
+            this.showToast(msg);
+        } catch (e) {
+            this.showToast('开通失败');
         }
+    },
+
+    async selectMemberPayMethod(method) {
+        const payMethod = String(method || '').trim().toLowerCase();
+        if (payMethod === 'bank_transfer') {
+            const box = document.getElementById('member-pay-transfer-box');
+            if (box) box.style.display = 'block';
+            return;
+        }
+        await this.submitMemberPurchaseByMethod(payMethod);
+    },
+
+    async submitMemberTransferPaid() {
+        await this.submitMemberPurchaseByMethod('bank_transfer');
+    },
+
+    copyMemberTransferInfo() {
+        const t = this.getCorporateTransferInfo();
+        const text = `公司名：${t.companyName}\n纳税人识别号：${t.taxNo}\n地址：${t.address}\n电话：${t.phone}\n开户行：${t.bank}\n账号：${t.account}`;
+        try {
+            if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => this.showToast('收款信息已复制')).catch(() => this.showToast('复制失败，请手动复制'));
+                return;
+            }
+        } catch (e) {}
+        this.showToast('复制失败，请手动复制');
+    },
+
+    async buyMember(level, price) {
+        try {
+            if (!this.state.user.isLogged) {
+                this.showToast('请先登录');
+                this.login();
+                return;
+            }
+            const planCode = String(level || 'city').trim();
+            if (!['city', 'province', 'country'].includes(planCode)) {
+                this.showToast('会员档位无效');
+                return;
+            }
+            const trialUsage = (this.state.user && this.state.user.trialUsage) || {};
+            if (trialUsage[planCode]) {
+                this.showToast('该档位已试用过');
+                return;
+            }
+            this.state.memberPurchasePlan = planCode;
+            const province = this.getProvinceForCity(this.state.currentCity) || '';
+            const city = this.state.currentCity !== '全国' ? this.state.currentCity : '';
+            const scopeValue = planCode === 'city' ? city : (planCode === 'province' ? province : '全国');
+            if (planCode !== 'country' && !scopeValue) {
+                this.showToast('请先选择城市后再试用');
+                return;
+            }
+            const apiBase = this.getApiBase();
+            if (!apiBase) {
+                this.showToast('未配置API地址');
+                return;
+            }
+            const res = await this.requestJson(`${apiBase}/api/member/trial/start`, {
+                method: 'POST',
+                body: { planCode, scopeValue }
+            });
+            if (res.ok && res.json && res.json.code === 1 && res.json.data) {
+                const d = res.json.data || {};
+                if (!this.state.user.trialUsage) this.state.user.trialUsage = { city: false, province: false, country: false };
+                this.state.user.trialUsage[planCode] = true;
+                this.state.user.vipLevel = d.vipLevel || this.state.user.vipLevel;
+                this.state.user.vipScopeValue = d.vipScopeValue || this.state.user.vipScopeValue;
+                this.state.user.vipExpire = this.normalizeVipExpireText(d.vipExpire || d.vip_expire_at || this.state.user.vipExpire || '');
+                if (typeof d.balance === 'number') this.state.user.balance = d.balance;
+                this.saveUser();
+                this.switchTab(2);
+                this.showToast('试用开通成功');
+                return;
+            }
+            const msg = (res.json && (res.json.msg || res.json.message)) || '试用开通失败';
+            this.showToast(msg);
+        } catch (e) {
+            this.showToast('试用开通失败');
+        }
+    },
+
+    selectMemberPurchasePlan(level) {
+        const plan = String(level || '').trim();
+        if (!['city', 'province', 'country'].includes(plan)) return;
+        this.state.memberPurchasePlan = plan;
+        this.refreshMemberCenterView();
+    },
+
+    selectMemberPurchaseMethod(method) {
+        const m = String(method || '').trim().toLowerCase();
+        if (!['wechat', 'alipay', 'bank_transfer'].includes(m)) return;
+        this.state.memberPurchaseMethod = m;
+        this.refreshMemberCenterView();
+    },
+
+    async submitMemberPurchase() {
+        if (!this.state.user.isLogged) {
+            this.showToast('请先登录');
+            this.login();
+            return;
+        }
+        const level = String(this.state.memberPurchasePlan || 'city');
+        await this.buyMember(level, this.getPlanPrice(level, 0));
     },
 
     // --- HTML Templates ---
@@ -6348,6 +6718,49 @@ const App = {
         const localPlanMap = (this.state.runtimeConfig && this.state.runtimeConfig['member.plan.prices']) || {};
         if (Object.prototype.hasOwnProperty.call(localPlanMap, code)) return Number(localPlanMap[code] || 0);
         return Number(fallback || 0);
+    },
+
+    getPlanDisplayPrice(code, fallbackPrice) {
+        const price = Number(fallbackPrice || this.getPlanPrice(code, 0) || 0);
+        if (!Number.isFinite(price)) return '¥0';
+        return `¥${price}`;
+    },
+
+    async refreshAppleIapPrices() {
+        if (!this.isNativeAppRuntime()) return;
+        const plugin = this.getIapPlugin ? this.getIapPlugin() : null;
+        if (!plugin || !plugin.getProducts) {
+            this.state.appleIapPriceMap = {};
+            return;
+        }
+        const plans = Array.isArray(this.state.memberPlans) ? this.state.memberPlans : [];
+        const pairs = plans.map((p) => ({
+            code: String((p && (p.code || p.planCode)) || '').trim(),
+            productId: String((p && (p.appleProductId || p.apple_product_id)) || '').trim(),
+        })).filter((x) => x.code && x.productId);
+        if (pairs.length === 0) {
+            this.state.appleIapPriceMap = {};
+            return;
+        }
+        const productIds = [...new Set(pairs.map((x) => x.productId))];
+        try {
+            const ret = await plugin.getProducts({ productIds });
+            const products = ret && Array.isArray(ret.products) ? ret.products : [];
+            const productPriceMap = {};
+            for (const p of products) {
+                const pid = String((p && p.id) || '').trim();
+                const displayPrice = String((p && p.displayPrice) || '').trim();
+                if (pid && displayPrice) productPriceMap[pid] = displayPrice;
+            }
+            const byPlan = {};
+            for (const row of pairs) {
+                if (productPriceMap[row.productId]) byPlan[row.code] = productPriceMap[row.productId];
+            }
+            this.state.appleIapPriceMap = byPlan;
+            if (this.state.currentTab === 2) this.refreshMemberCenterView();
+        } catch (e) {
+            this.state.appleIapPriceMap = {};
+        }
     },
 
     getFeatureFlag(flag, fallback = true) {
@@ -6436,7 +6849,15 @@ const App = {
     refreshMemberCenterView() {
         if (this.state.currentTab !== 2) return;
         const area = document.getElementById('content-area');
-        if (area) area.innerHTML = this.getMemberCenterHTML();
+        if (area) {
+            try {
+                area.innerHTML = this.getMemberCenterHTML();
+            } catch (e) {
+                const errText = String((e && e.message) || e || '未知错误');
+                area.innerHTML = `<div style="padding:16px;"><div style="background:#fff;border-radius:12px;padding:16px;color:#333;">会员中心加载失败：${errText}</div></div>`;
+                console.error('member center refresh error', e);
+            }
+        }
         const user = this.state.user || {};
         const needRecover = !!(user.isLogged && user.vipLevel !== 'free' && !this.normalizeVipExpireText(user.vipExpire || user.vipExpireRaw || ''));
         if (needRecover && !this.state.vipExpireRecovering) {
@@ -6445,7 +6866,15 @@ const App = {
                 this.state.vipExpireRecovering = false;
                 if (txt && this.state.currentTab === 2) {
                     const box = document.getElementById('content-area');
-                    if (box) box.innerHTML = this.getMemberCenterHTML();
+                    if (box) {
+                        try {
+                            box.innerHTML = this.getMemberCenterHTML();
+                        } catch (e) {
+                            const errText = String((e && e.message) || e || '未知错误');
+                            box.innerHTML = `<div style="padding:16px;"><div style="background:#fff;border-radius:12px;padding:16px;color:#333;">会员中心加载失败：${errText}</div></div>`;
+                            console.error('member center recover render error', e);
+                        }
+                    }
                 }
             }).catch(() => {
                 this.state.vipExpireRecovering = false;
@@ -7045,6 +7474,125 @@ const App = {
         }
     },
 
+    async resetAdminMemberPassword(userId, retried = false) {
+        const apiBase = this.getApiBase();
+        if (!apiBase) return;
+        const uid = Number(userId || 0);
+        if (!uid) {
+            this.showToast('用户ID无效');
+            return;
+        }
+        const newPassword = String(prompt('请输入新密码（至少6位）') || '').trim();
+        if (!newPassword || newPassword.length < 6) {
+            this.showToast('新密码至少6位');
+            return;
+        }
+        const headers = this.getAdminAuthHeaders();
+        const candidates = [
+            { url: `${apiBase}/api/admin/members/${uid}/reset-password`, method: 'POST', body: { newPassword } },
+            { url: `${apiBase}/api/admin/users/${uid}/reset-password`, method: 'POST', body: { newPassword } },
+            { url: `${apiBase}/api/admin/users/${uid}/password`, method: 'PUT', body: { newPassword } },
+            { url: `${apiBase}/api/admin/users/${uid}/password/reset`, method: 'POST', body: { newPassword } },
+            { url: `${apiBase}/api/admin/users/${uid}`, method: 'PATCH', body: { password: newPassword } },
+        ];
+        let res = { ok: false, status: 0, json: null };
+        let lastMsg = '';
+        for (const c of candidates) {
+            res = await this.requestJson(c.url, {
+                method: c.method,
+                headers,
+                body: c.body
+            });
+            const m = String((res.json && (res.json.msg || res.json.message)) || '');
+            if (res.ok && (m || res.json)) {
+                lastMsg = m;
+            }
+            const quickOk = !!(res.ok && (
+                (res.json && typeof res.json === 'object' && (res.json.code === 1 || res.json.success === true)) ||
+                (typeof res.json === 'string' && /success|成功|reset|updated/i.test(res.json)) ||
+                /success|成功|reset|updated/i.test(m)
+            ));
+            if (quickOk) break;
+            const status = Number(res.status || 0);
+            if (status !== 404) {
+                lastMsg = m;
+            }
+            if (![404, 405].includes(status)) break;
+        }
+        const resetMsg = String((res.json && (res.json.msg || res.json.message)) || '');
+        const resetOk = !!(res.ok && (
+            (res.json && typeof res.json === 'object' && (res.json.code === 1 || res.json.success === true)) ||
+            (!res.json) ||
+            (typeof res.json === 'string' && /success|成功|reset|updated/i.test(res.json)) ||
+            /success|成功|reset|updated/i.test(resetMsg)
+        ));
+        if (resetOk) {
+            this.showToast('密码已重置');
+        } else {
+            const msg = resetMsg || lastMsg;
+            const needPin = Number(res.status || 0) === 401 || /PIN二次验证|PIN验证已失效/.test(msg);
+            if (needPin && !retried) {
+                const pin = prompt('PIN已失效，请重新输入PIN码');
+                if (pin) {
+                    const v = await this.verifyAdminPin(String(pin).trim());
+                    if (v.ok) return await this.resetAdminMemberPassword(uid, true);
+                    this.showToast(v.msg || 'PIN验证失败');
+                    return;
+                }
+            }
+            const fallback = res && res.status ? `重置失败(${res.status})` : '重置失败';
+            this.showToast(msg || fallback);
+        }
+    },
+
+    async deleteAdminMember(userId, username = '', retried = false) {
+        const apiBase = this.getApiBase();
+        if (!apiBase) return;
+        const uid = Number(userId || 0);
+        if (!uid) {
+            this.showToast('用户ID无效');
+            return;
+        }
+        const name = String(username || '').trim() || `#${uid}`;
+        if (!confirm(`确认删除用户 ${name} 吗？`)) return;
+        const headers = this.getAdminAuthHeaders();
+        let res = await this.requestJson(`${apiBase}/api/admin/members/${uid}`, {
+            method: 'DELETE',
+            headers
+        });
+        if (!(res.ok && res.json && res.json.code === 1) && Number(res.status || 0) === 404) {
+            res = await this.requestJson(`${apiBase}/api/admin/users/${uid}`, {
+                method: 'DELETE',
+                headers
+            });
+        }
+        const delMsg = String((res.json && (res.json.msg || res.json.message)) || '');
+        const delOk = !!(res.ok && (
+            (res.json && typeof res.json === 'object' && (res.json.code === 1 || res.json.success === true)) ||
+            (!res.json) ||
+            (typeof res.json === 'string' && /success|deleted|成功/i.test(res.json)) ||
+            /success|deleted|成功/i.test(delMsg)
+        ));
+        if (delOk) {
+            this.showToast('用户已删除');
+            await this.refreshAdminMembers(this.state.adminMemberPage || 1);
+        } else {
+            const msg = delMsg;
+            const needPin = Number(res.status || 0) === 401 || /PIN二次验证|PIN验证已失效/.test(msg);
+            if (needPin && !retried) {
+                const pin = prompt('PIN已失效，请重新输入PIN码');
+                if (pin) {
+                    const v = await this.verifyAdminPin(String(pin).trim());
+                    if (v.ok) return await this.deleteAdminMember(uid, username, true);
+                    this.showToast(v.msg || 'PIN验证失败');
+                    return;
+                }
+            }
+            const fallback = res && res.status ? `删除失败(${res.status})` : '删除失败';
+            this.showToast(msg || fallback);
+        }
+    },
+
     async grantAdminRole() {
         const apiBase = this.getApiBase();
         if (!apiBase) return;
@@ -7107,6 +7655,32 @@ const App = {
                 });
                 if (ret.ok) this.setAdminPublishStatus(ret.local ? 'local' : 'online', ret.msg || '');
                 this.showToast(ret.ok ? '功能开关已发布' : (ret.msg || '保存失败'));
+                return;
+            }
+            if (action === 'payment') {
+                const payload = {
+                    wechatEnabled: !!((document.getElementById('adm-pay-wechat-enabled') || {}).checked),
+                    alipayEnabled: !!((document.getElementById('adm-pay-alipay-enabled') || {}).checked),
+                    transferEnabled: !!((document.getElementById('adm-pay-transfer-enabled') || {}).checked),
+                    wechatLabel: String((document.getElementById('adm-pay-wechat-label') || {}).value || '').trim() || '微信支付',
+                    alipayLabel: String((document.getElementById('adm-pay-alipay-label') || {}).value || '').trim() || '支付宝支付',
+                    transferLabel: String((document.getElementById('adm-pay-transfer-label') || {}).value || '').trim() || '对公转账',
+                    wechatAppId: String((document.getElementById('adm-pay-wechat-appid') || {}).value || '').trim(),
+                    wechatMchId: String((document.getElementById('adm-pay-wechat-mchid') || {}).value || '').trim(),
+                    wechatApiKey: String((document.getElementById('adm-pay-wechat-key') || {}).value || '').trim(),
+                    alipayAppId: String((document.getElementById('adm-pay-alipay-appid') || {}).value || '').trim(),
+                    alipaySellerId: String((document.getElementById('adm-pay-alipay-seller') || {}).value || '').trim(),
+                    alipayPublicKey: String((document.getElementById('adm-pay-alipay-pubkey') || {}).value || '').trim(),
+                    transferCompanyName: String((document.getElementById('adm-pay-transfer-company') || {}).value || '').trim(),
+                    transferTaxNo: String((document.getElementById('adm-pay-transfer-taxno') || {}).value || '').trim(),
+                    transferAddress: String((document.getElementById('adm-pay-transfer-address') || {}).value || '').trim(),
+                    transferPhone: String((document.getElementById('adm-pay-transfer-phone') || {}).value || '').trim(),
+                    transferBank: String((document.getElementById('adm-pay-transfer-bank') || {}).value || '').trim(),
+                    transferAccount: String((document.getElementById('adm-pay-transfer-account') || {}).value || '').trim(),
+                };
+                const ret = await this.adminUpdateConfig('payment.channels', payload);
+                if (ret.ok) this.setAdminPublishStatus(ret.local ? 'local' : 'online', ret.msg || '');
+                this.showToast(ret.ok ? '支付方式配置已发布' : (ret.msg || '保存失败'));
                 return;
             }
             if (action === 'copy') {
@@ -7182,6 +7756,24 @@ const App = {
                 this.showToast(ret.ok ? '会员权益文案已发布' : (ret.msg || '保存失败'));
                 return;
             }
+            if (action === 'benefitsMatrix') {
+                const n = (id, d) => {
+                    const v = Number((document.getElementById(id) || {}).value);
+                    return Number.isFinite(v) ? v : d;
+                };
+                const s = (id, d) => String((document.getElementById(id) || {}).value || '').trim() || d;
+                const payload = {
+                    free: { scope: s('adm-mx-free-scope', '体验'), viewLimit: n('adm-mx-free-view', 10), keywordLimit: n('adm-mx-free-keyword', 1), deviceLimit: n('adm-mx-free-device', 1), serviceCount: n('adm-mx-free-service', 0) },
+                    city: { scope: s('adm-mx-city-scope', '城市'), viewLimit: n('adm-mx-city-view', 100), keywordLimit: n('adm-mx-city-keyword', 10), deviceLimit: n('adm-mx-city-device', 2), serviceCount: n('adm-mx-city-service', 1) },
+                    province: { scope: s('adm-mx-province-scope', '全省'), viewLimit: n('adm-mx-province-view', 500), keywordLimit: n('adm-mx-province-keyword', 50), deviceLimit: n('adm-mx-province-device', 5), serviceCount: n('adm-mx-province-service', 3) },
+                    country: { scope: s('adm-mx-country-scope', '全国'), viewLimit: n('adm-mx-country-view', -1), keywordLimit: n('adm-mx-country-keyword', 200), deviceLimit: n('adm-mx-country-device', 10), serviceCount: n('adm-mx-country-service', 5) },
+                };
+                const ret = await this.adminUpdateConfig('member.permission.matrix', payload);
+                if (ret.ok && this.state.currentTab === 2) this.refreshMemberCenterView();
+                if (ret.ok) this.setAdminPublishStatus(ret.local ? 'local' : 'online', ret.msg || '');
+                this.showToast(ret.ok ? '权益对比配置已发布' : (ret.msg || '保存失败'));
+                return;
+            }
             if (action === 'plans') {
                 const apiBase = this.getApiBase();
                 const city = Number((document.getElementById('adm-plan-city') || {}).value || 0);
@@ -7217,22 +7809,39 @@ const App = {
                     this.showToast('当前环境不支持修改线上PIN');
                     return;
                 }
-                const headers = this.getAdminAuthHeaders();
                 const oldPin = String((document.getElementById('adm-pin-old') || {}).value || '');
                 const newPin = String((document.getElementById('adm-pin-new') || {}).value || '');
-                const res = await this.requestJson(`${apiBase}/api/admin/pin/change`, {
-                    method: 'POST',
-                    headers,
-                    body: { oldPin, newPin }
-                });
-                if (res.ok && res.json && res.json.code === 1) {
+                const doChange = async () => {
+                    const headers = this.getAdminAuthHeaders();
+                    const res = await this.requestJson(`${apiBase}/api/admin/pin/change`, {
+                        method: 'POST',
+                        headers,
+                        body: { oldPin, newPin, old_pin: oldPin, new_pin: newPin }
+                    });
+                    const msg = String((res.json && (res.json.msg || res.json.message)) || '');
+                    const ok = !!(res.ok && (
+                        (res.json && typeof res.json === 'object' && (res.json.code === 1 || res.json.success === true)) ||
+                        (!res.json) ||
+                        (typeof res.json === 'string' && /success|成功|updated/i.test(res.json)) ||
+                        /success|成功|updated/i.test(msg)
+                    ));
+                    return { ok, msg, res };
+                };
+                let result = await doChange();
+                const needPin = (!result.ok) && (Number(result.res && result.res.status || 0) === 401 || /PIN验证已失效|需要PIN二次验证|pin/i.test(result.msg));
+                if (needPin) {
+                    const v = await this.verifyAdminPin(oldPin);
+                    if (v.ok) result = await doChange();
+                }
+                if (result.ok) {
                     this.setAdminPublishStatus('online');
                     this.showToast('PIN码修改成功');
                     this.closeAdminPanel();
                 } else {
-                    const msg = (res.json && (res.json.msg || res.json.message)) || 'PIN修改失败';
-                    if (this.isAdminAccessDeniedMsg(msg)) this.setAdminPublishStatus('local', '当前账号缺少线上PIN修改权限');
-                    this.showToast(this.isAdminAccessDeniedMsg(msg) ? '线上未授予超管PIN权限' : msg);
+                    const msg = result.msg;
+                    const denied = this.isAdminAccessDeniedMsg(msg);
+                    if (denied) this.setAdminPublishStatus('local', '当前账号缺少线上PIN修改权限');
+                    this.showToast(denied ? '线上未授予超管PIN权限' : (msg || 'PIN修改失败'));
                 }
                 return;
             }
@@ -7324,7 +7933,7 @@ const App = {
             return;
         }
         const link = this.getInviteLink();
-        const text = `我在用招投标雷达App，邀请码：${inviteCode}，下载链接：${link}`;
+        const text = `我在用商机雷达，邀请码：${inviteCode}，下载链接：${link}`;
         const ok = await this.copyToClipboard(text);
         if (ok) this.showToast('邀请信息已复制');
     },
@@ -7355,6 +7964,7 @@ const App = {
             banner: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M7 12l3-3 2 2 3-3 2 4"></path><circle cx="8" cy="8" r="1"></circle></svg>',
             popup: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
             benefits: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12v10H4V12"></path><path d="M2 7h20v5H2z"></path><path d="M12 22V7"></path><path d="M12 7h5a2.5 2.5 0 0 0 0-5c-3 0-5 5-5 5z"></path><path d="M12 7H7a2.5 2.5 0 0 1 0-5c3 0 5 5 5 5z"></path></svg>',
+            benefitsMatrix: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 10h18"></path><path d="M9 4v16"></path><path d="M15 10v10"></path></svg>',
             members: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>',
             orders: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M8 9h8"></path><path d="M8 13h8"></path><path d="M8 17h5"></path></svg>',
             codes: '<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#141414" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M7 12h2"></path><path d="M15 12h2"></path><path d="M12 6v12"></path></svg>',
@@ -7396,8 +8006,10 @@ const App = {
                     { key: 'referral', label: '推荐奖励配置' },
                     { key: 'profileReward', label: '资料奖励配置' },
                     { key: 'plans', label: '会员价格配置' },
+                    { key: 'payment', label: '支付方式配置' },
                     { key: 'copy', label: '登录文案配置' },
                     { key: 'benefits', label: '会员权益文案' },
+                    { key: 'benefitsMatrix', label: '权益对比设置' },
                     { key: 'features', label: '功能开关配置' }
                 ]
             },
@@ -7488,18 +8100,27 @@ const App = {
         const popupCfg = (this.state.runtimeConfig && this.state.runtimeConfig['notice.popup']) || {};
         const profileRewardCfg = (this.state.runtimeConfig && this.state.runtimeConfig['profile.reward']) || {};
         const memberCopyCfg = (this.state.runtimeConfig && this.state.runtimeConfig['copy.member']) || {};
+        const permissionMatrix = this.getMemberPermissionMatrix();
+        const viewText = (n) => Number(n) < 0 ? '无限制' : `${Math.max(0, Number(n || 0))}次`;
+        const keywordText = (n) => `${Math.max(0, Number(n || 0))}个`;
         const flagCfg = (this.state.runtimeConfig && this.state.runtimeConfig['feature.flags']) || {};
+        const paymentCfg = this.getPaymentRuntimeConfig();
         const cityPrice = this.getPlanPrice('city', 399);
         const provincePrice = this.getPlanPrice('province', 999);
         const countryPrice = this.getPlanPrice('country', 2999);
+        const cityPriceText = this.getPlanDisplayPrice('city', cityPrice);
+        const provincePriceText = this.getPlanDisplayPrice('province', provincePrice);
+        const countryPriceText = this.getPlanDisplayPrice('country', countryPrice);
         const titleMap = {
             referral: '推荐奖励配置',
             profileReward: '资料奖励配置',
             plans: '会员价格配置',
+            payment: '支付方式配置',
             copy: '登录文案配置',
             banner: '首页Banner配置',
             popup: '公告弹窗配置',
             benefits: '会员权益文案',
+            benefitsMatrix: '权益对比设置',
             members: '会员管理',
             orders: '订单管理',
             codes: '激活码管理',
@@ -7542,13 +8163,45 @@ const App = {
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">全国会员价格（元）</div><input id="adm-plan-country" type="number" value="${Number(countryPrice)}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
                 </div>
             `;
+        } else if (type === 'payment') {
+            content = `
+                <div style="display:grid; grid-template-columns:1fr; gap:12px;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; padding:14px 12px; border:1px solid #e5e5ea; border-radius:10px;">
+                        <span>启用微信支付</span>
+                        <input id="adm-pay-wechat-enabled" type="checkbox" ${paymentCfg.wechatEnabled ? 'checked' : ''} style="width:22px;height:22px;">
+                    </label>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">微信支付按钮名称</div><input id="adm-pay-wechat-label" type="text" value="${String(paymentCfg.wechatLabel).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">微信商户号</div><input id="adm-pay-wechat-mchid" type="text" value="${String(paymentCfg.wechatMchId).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">微信AppID</div><input id="adm-pay-wechat-appid" type="text" value="${String(paymentCfg.wechatAppId).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">微信API密钥（建议填加密后的配置标识）</div><input id="adm-pay-wechat-key" type="text" value="${String(paymentCfg.wechatApiKey).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:13px;"></div>
+                    <label style="display:flex; align-items:center; justify-content:space-between; padding:14px 12px; border:1px solid #e5e5ea; border-radius:10px;">
+                        <span>启用支付宝支付</span>
+                        <input id="adm-pay-alipay-enabled" type="checkbox" ${paymentCfg.alipayEnabled ? 'checked' : ''} style="width:22px;height:22px;">
+                    </label>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">支付宝按钮名称</div><input id="adm-pay-alipay-label" type="text" value="${String(paymentCfg.alipayLabel).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">支付宝应用ID</div><input id="adm-pay-alipay-appid" type="text" value="${String(paymentCfg.alipayAppId).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">支付宝商户标识</div><input id="adm-pay-alipay-seller" type="text" value="${String(paymentCfg.alipaySellerId).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">支付宝公钥（可公开）</div><textarea id="adm-pay-alipay-pubkey" style="width:100%;height:78px;border:1px solid #e5e5ea;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.4;">${String(paymentCfg.alipayPublicKey || '').replace(/</g, '&lt;')}</textarea></div>
+                    <label style="display:flex; align-items:center; justify-content:space-between; padding:14px 12px; border:1px solid #e5e5ea; border-radius:10px;">
+                        <span>启用对公转账</span>
+                        <input id="adm-pay-transfer-enabled" type="checkbox" ${paymentCfg.transferEnabled ? 'checked' : ''} style="width:22px;height:22px;">
+                    </label>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">对公转账按钮名称</div><input id="adm-pay-transfer-label" type="text" value="${String(paymentCfg.transferLabel).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">公司名</div><input id="adm-pay-transfer-company" type="text" value="${String(paymentCfg.transferCompanyName).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">纳税人识别号</div><input id="adm-pay-transfer-taxno" type="text" value="${String(paymentCfg.transferTaxNo).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">地址</div><input id="adm-pay-transfer-address" type="text" value="${String(paymentCfg.transferAddress).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:13px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">电话</div><input id="adm-pay-transfer-phone" type="text" value="${String(paymentCfg.transferPhone).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">开户行</div><input id="adm-pay-transfer-bank" type="text" value="${String(paymentCfg.transferBank).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:13px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">账号</div><input id="adm-pay-transfer-account" type="text" value="${String(paymentCfg.transferAccount).replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
+                </div>
+            `;
         } else if (type === 'banner') {
             const slides = Array.isArray(bannerCfg.slides) ? bannerCfg.slides : [];
             const b1 = slides[0] || {};
             const b2 = slides[1] || {};
             content = `
                 <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
-                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">Banner1 标题</div><input id="adm-banner-title-1" type="text" value="${String(b1.title || '招投标雷达APP').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">Banner1 标题</div><input id="adm-banner-title-1" type="text" value="${String(b1.title || '商机雷达').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">Banner1 副标题</div><input id="adm-banner-subtitle-1" type="text" value="${String(b1.subtitle || 'AI数字员工24小时为您寻找商机！').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:15px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">Banner2 标题</div><input id="adm-banner-title-2" type="text" value="${String(b2.title || '精准商机订阅').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">Banner2 副标题</div><input id="adm-banner-subtitle-2" type="text" value="${String(b2.subtitle || '关键词+地区，实时推送不漏标').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:15px;"></div>
@@ -7562,7 +8215,7 @@ const App = {
                         <input id="adm-popup-enabled" type="checkbox" ${popupCfg.enabled ? 'checked' : ''} style="width:22px;height:22px;">
                     </label>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">弹窗标题</div><input id="adm-popup-title" type="text" value="${String(popupCfg.title || '运营公告').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
-                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">弹窗内容</div><textarea id="adm-popup-content" style="width:100%;height:108px;border:1px solid #e5e5ea;border-radius:10px;padding:10px 12px;font-size:15px;line-height:1.5;">${String(popupCfg.content || '欢迎使用招投标雷达，最新活动已上线。')}</textarea></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">弹窗内容</div><textarea id="adm-popup-content" style="width:100%;height:108px;border:1px solid #e5e5ea;border-radius:10px;padding:10px 12px;font-size:15px;line-height:1.5;">${String(popupCfg.content || '欢迎使用商机雷达，最新活动已上线。')}</textarea></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">按钮文案</div><input id="adm-popup-button" type="text" value="${String(popupCfg.buttonText || '我知道了').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">弹窗版本号（更新后会再次弹出）</div><input id="adm-popup-version" type="text" value="${String(popupCfg.version || 'v1').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
                 </div>
@@ -7570,7 +8223,7 @@ const App = {
         } else if (type === 'copy') {
             content = `
                 <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
-                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">登录页标题</div><input id="adm-copy-title" type="text" value="${String(copyCfg.title || '招投标雷达App').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
+                    <div><div style="font-size:12px;color:#666;margin-bottom:6px;">登录页标题</div><input id="adm-copy-title" type="text" value="${String(copyCfg.title || '商机雷达').replace(/"/g, '&quot;')}" style="width:100%;height:44px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:16px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">登录页副标题</div><textarea id="adm-copy-subtitle" style="width:100%;height:88px;border:1px solid #e5e5ea;border-radius:10px;padding:10px 12px;font-size:15px;line-height:1.5;">${String(copyCfg.subtitle || 'AI数字人24 小时为您寻找商机')}</textarea></div>
                 </div>
             `;
@@ -7611,6 +8264,31 @@ const App = {
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">全国会员标题</div><input id="adm-ben-country-title" type="text" value="${country.title.replace(/"/g, '&quot;')}" style="width:100%;height:40px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">全国会员副标题</div><input id="adm-ben-country-subtitle" type="text" value="${country.subtitle.replace(/"/g, '&quot;')}" style="width:100%;height:40px;border:1px solid #e5e5ea;border-radius:10px;padding:0 12px;font-size:14px;"></div>
                     <div><div style="font-size:12px;color:#666;margin-bottom:6px;">全国会员权益（每行一条）</div><textarea id="adm-ben-country-items" style="width:100%;height:72px;border:1px solid #e5e5ea;border-radius:10px;padding:8px 12px;font-size:13px;line-height:1.5;">${country.benefits.join('\n')}</textarea></div>
+                </div>
+            `;
+        } else if (type === 'benefitsMatrix') {
+            const row = (key, title) => {
+                const m = permissionMatrix[key] || {};
+                return `
+                    <div style="border:1px solid #ececf0;border-radius:10px;padding:10px;">
+                        <div style="font-size:13px;color:#111;font-weight:600;margin-bottom:8px;">${title}</div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                            <div><div style="font-size:12px;color:#666;margin-bottom:4px;">查阅范围</div><input id="adm-mx-${key}-scope" type="text" value="${String(m.scope || '').replace(/"/g, '&quot;')}" style="width:100%;height:38px;border:1px solid #e5e5ea;border-radius:8px;padding:0 10px;font-size:13px;"></div>
+                            <div><div style="font-size:12px;color:#666;margin-bottom:4px;">项目查看上限</div><input id="adm-mx-${key}-view" type="number" value="${Number(m.viewLimit)}" style="width:100%;height:38px;border:1px solid #e5e5ea;border-radius:8px;padding:0 10px;font-size:13px;"></div>
+                            <div><div style="font-size:12px;color:#666;margin-bottom:4px;">关键词上限</div><input id="adm-mx-${key}-keyword" type="number" value="${Number(m.keywordLimit)}" style="width:100%;height:38px;border:1px solid #e5e5ea;border-radius:8px;padding:0 10px;font-size:13px;"></div>
+                            <div><div style="font-size:12px;color:#666;margin-bottom:4px;">设备登录数</div><input id="adm-mx-${key}-device" type="number" value="${Number(m.deviceLimit)}" style="width:100%;height:38px;border:1px solid #e5e5ea;border-radius:8px;padding:0 10px;font-size:13px;"></div>
+                            <div><div style="font-size:12px;color:#666;margin-bottom:4px;">人工服务</div><input id="adm-mx-${key}-service" type="number" value="${Number(m.serviceCount)}" style="width:100%;height:38px;border:1px solid #e5e5ea;border-radius:8px;padding:0 10px;font-size:13px;"></div>
+                        </div>
+                    </div>
+                `;
+            };
+            content = `
+                <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+                    ${row('free', '免费会员')}
+                    ${row('city', '城市会员')}
+                    ${row('province', '省级会员')}
+                    ${row('country', '全国会员')}
+                    <div style="font-size:12px;color:#8a8a8a;line-height:1.5;">提示：项目查看上限填 -1 表示无限制。</div>
                 </div>
             `;
         } else if (type === 'info') {
@@ -7659,7 +8337,7 @@ const App = {
                     <button onclick="refreshAdminMembers(1)" style="height:36px;border:none;border-radius:8px;background:#111;color:#fff;padding:0 12px;font-size:12px;">筛选</button>
                 </div>
                 <div style="font-size:12px;color:#999;margin:6px 0 8px;">最近会员列表</div>
-                ${rows.length ? rows.map((x) => `<div style="padding:10px 12px;border:1px solid #ececf0;border-radius:10px;margin-bottom:8px;"><div style="font-size:13px;color:#111;font-weight:600;">#${Number(x.id||0)} ${x.username || '-'} · ${x.vipLevel || 'free'}</div><div style="font-size:12px;color:#666;margin-top:4px;">到期 ${x.vipExpireAt ? String(x.vipExpireAt).slice(0,10) : '-'} · 邀请码 ${x.inviteCode || '-'}</div></div>`).join('') : '<div style="padding:12px;color:#999;">暂无数据</div>'}
+                ${rows.length ? rows.map((x) => `<div style="padding:10px 12px;border:1px solid #ececf0;border-radius:10px;margin-bottom:8px;"><div style="font-size:13px;color:#111;font-weight:600;">#${Number(x.id||0)} 会员名称 ${x.nickname || x.username || '-'} · ${x.vipLevel || 'free'}</div><div style="font-size:12px;color:#666;margin-top:4px;">账号 ${x.username || '-'} · 到期 ${x.vipExpireAt ? String(x.vipExpireAt).slice(0,10) : '-'}${x.inviteCode ? ` · 邀请码 ${x.inviteCode}` : ''}</div><div style="display:flex;gap:8px;margin-top:8px;"><button onclick="resetAdminMemberPassword(${Number(x.id||0)})" style="height:30px;border:none;border-radius:8px;background:#3A66FF;color:#fff;padding:0 10px;font-size:12px;">重置密码</button><button onclick="deleteAdminMember(${Number(x.id||0)}, '${String(x.username || '').replace(/'/g, '\\\'')}')" style="height:30px;border:none;border-radius:8px;background:#F04438;color:#fff;padding:0 10px;font-size:12px;">删除用户</button></div></div>`).join('') : '<div style="padding:12px;color:#999;">暂无数据</div>'}
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px; font-size:12px; color:#666;">
                     <button onclick="prevAdminMembersPage()" style="height:30px;border:1px solid #ddd;border-radius:8px;background:#fff;padding:0 10px;">上一页</button>
                     <span>第 ${Number(this.state.adminMemberPage || 1)} / ${totalPages} 页 · 共 ${Number(this.state.adminMemberTotal || 0)} 条</span>
@@ -7828,155 +8506,22 @@ const App = {
 
     getMemberCenterHTML() {
         const user = this.state.user || {};
-        // Ensure user properties exist to prevent crashes
         user.vipLevel = user.vipLevel || 'free';
-        user.balance = user.balance || 0;
+        user.balance = Number(user.balance || 0);
         user.avatar = user.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop';
         user.username = user.username || '用户';
         user.inviteCode = user.inviteCode || '';
         user.invitedCount = Number(user.invitedCount || 0);
         user.inviteRewardTotal = Number(user.inviteRewardTotal || 0);
         user.role = user.role || 'user';
+
         const cityPrice = this.getPlanPrice('city', 399);
         const provincePrice = this.getPlanPrice('province', 999);
         const countryPrice = this.getPlanPrice('country', 2999);
-        const inviteEnabled = this.getFeatureFlag('inviteEnabled', true);
-        const withdrawEnabled = this.getFeatureFlag('withdrawEnabled', false);
-        const showAdminDrawer = !!(this.state.adminDrawerOpen && user.isLogged && this.isAdminUser());
-        const adminPanelHtml = this.getAdminPanelHtml();
-        const adminDrawerHtml = showAdminDrawer ? this.getAdminDrawerHtml() : '';
-
-        // If logged in, default to their actual level unless manually switched (state.vipCardTab)
-        // If not logged in, default to 'free'
-        let currentTab = this.state.vipCardTab;
-        
-        if (!currentTab) {
-            if (user.isLogged && user.vipLevel !== 'none') {
-                currentTab = user.vipLevel;
-            } else {
-                currentTab = 'free';
-            }
-            // Sync state so tabs highlight correctly
-            this.state.vipCardTab = currentTab;
-        }
-        
-        let userCardHtml = '';
-        let memberContentMarginTop = '-28px';
-        
-        // Define Icons
-        const cityIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#C0C0C0" stroke="#808080" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
-        const provIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700" stroke="#DAA520" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
-        const countryIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#333" stroke="#FFD700" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
-        
-        if (user.isLogged) {
-            let vipBadge = '';
-            let vipClass = 'gray';
-            let vipIcon = '';
-            // Free Member: Blue
-            let cardStyle = 'background: radial-gradient(circle at 18% 10%, rgba(255,255,255,0.24) 0, rgba(255,255,255,0) 36%), radial-gradient(circle at 84% 82%, rgba(0,229,255,0.2) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; box-shadow: 0 8px 24px rgba(16, 96, 233, 0.28);'; 
-            let avatarBorder = 'border: 2px solid rgba(255,255,255,0.8);';
-            let badgeStyle = 'background: rgba(255,255,255,0.2); color: white; backdrop-filter: blur(4px);';
-            let actionBtnStyle = 'background: rgba(255,255,255,0.2); color: white;';
-            
-            if (user.vipLevel === 'city') { 
-                vipBadge = '城市会员'; 
-                vipClass = 'green';
-                vipIcon = cityIcon;
-                // City Member: Dark Green (Ink Green)
-                cardStyle = 'background: linear-gradient(135deg, #2C5F2D, #1E3F1F); color: white; box-shadow: 0 4px 12px rgba(44, 95, 45, 0.3);';
-                avatarBorder = 'border: 2px solid rgba(255,255,255,0.6);';
-                badgeStyle = 'background: rgba(255,255,255,0.15); color: white; backdrop-filter: blur(4px);';
-            }
-            else if (user.vipLevel === 'province') { 
-                vipBadge = '省级会员'; 
-                vipClass = 'gold';
-                vipIcon = provIcon;
-                // Provincial Member: Gold
-                cardStyle = 'background: linear-gradient(135deg, #FFD700, #FDB931); color: #5D4037; box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);';
-                avatarBorder = 'border: 2px solid rgba(255,255,255,0.8);';
-                badgeStyle = 'background: rgba(255,255,255,0.4); color: #5D4037; backdrop-filter: blur(4px); font-weight: 600;';
-                actionBtnStyle = 'background: rgba(255,255,255,0.4); color: #5D4037;';
-            }
-            else if (user.vipLevel === 'country') { 
-                vipBadge = '全国会员'; 
-                vipClass = 'black-gold';
-                vipIcon = countryIcon;
-                // National Member: Black Gold
-                cardStyle = 'background: linear-gradient(135deg, #1C1C1E, #2C2C2E); color: #FFD700; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); border: 1px solid #333;';
-                avatarBorder = 'border: 2px solid #FFD700;';
-                badgeStyle = 'background: linear-gradient(90deg, #FFD700, #FDB931); color: #1C1C1E; font-weight: 800; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
-                actionBtnStyle = 'background: rgba(255, 255, 255, 0.1); color: #FFD700; border: 1px solid #FFD700;';
-            }
-            
-            const badgeHtml = user.vipLevel !== 'free' ? 
-                `<span class="tag-new" style="${badgeStyle} margin-left: 8px; padding: 2px 8px; border-radius: 12px; font-size: 11px; display: flex; align-items: center;">
-                    <span style="margin-right: 4px;">${vipIcon}</span>${vipBadge}
-                 </span>` : 
-                `<span class="tag-new" style="${badgeStyle} margin-left: 8px; padding: 2px 8px; border-radius: 12px; font-size: 11px;">普通用户</span>`;
-                
-            const expireText = this.normalizeVipExpireText(user.vipExpire || user.vipExpireRaw || '');
-            const rawExpireText = String(user.vipExpireRaw || '').trim();
-            const expireDisplay = expireText || ((rawExpireText.match(/\d{4}-\d{2}-\d{2}/) || [])[0] || '');
-            const expireHtml = user.vipLevel !== 'free'
-                ? `<div style="font-size: 12px; opacity: 0.8; margin-top: 4px;">有效期至: ${expireDisplay || '待同步'}</div>`
-                : '';
-
-
-            userCardHtml = `
-                <div style="${cardStyle} padding: 20px; padding-top: calc(max(env(safe-area-inset-top), 44px) + 12px); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 0; position: absolute; top: 0; left: 0; width: 100%; height: 246px;">
-                    <img src="${user.avatar}" style="width: 72px; height: 72px; border-radius: 50%; margin-bottom: 12px; object-fit: cover; ${avatarBorder} box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
-                    <div style="z-index: 2; display: flex; flex-direction: column; align-items: center;">
-                        <div style="font-size: 20px; font-weight: 700; display: flex; align-items: center; margin-bottom: 6px; text-shadow: 0 1px 2px rgba(0,0,0,0.1);">
-                            ${user.username}
-                            ${badgeHtml}
-                        </div>
-                        ${expireHtml}
-                    </div>
-                    <button style="${actionBtnStyle} position: absolute; top: calc(max(env(safe-area-inset-top), 44px) + 10px); right: 14px; border: none; width: 28px; height: 28px; border-radius: 14px; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); z-index: 30; cursor: pointer; -webkit-tap-highlight-color: transparent;" onclick="openMemberSettings()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
-                    
-                    ${user.vipLevel === 'country' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">👑</div>' : ''}
-                    ${user.vipLevel === 'province' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">💎</div>' : ''}
-                    ${user.vipLevel === 'city' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">🏙️</div>' : ''}
-                    ${user.vipLevel === 'free' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.05; transform: rotate(15deg);">👤</div>' : ''}
-                </div>
-                <div style="height: 246px;"></div>
-            `;
-        } else {
-            userCardHtml = `
-                <div style="background: radial-gradient(circle at 16% 10%, rgba(255,255,255,0.28) 0, rgba(255,255,255,0) 36%), radial-gradient(circle at 85% 82%, rgba(0,229,255,0.22) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; padding: 20px; padding-top: calc(max(env(safe-area-inset-top), 44px) + 10px); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 0; position: absolute; top: 0; left: 0; width: 100%; height: 246px; overflow: hidden;">
-                    <div style="position: absolute; inset: 0; background: linear-gradient(120deg, rgba(255,255,255,0.12), rgba(255,255,255,0) 35%);"></div>
-                    <div style="position: absolute; width: 220px; height: 220px; right: -90px; bottom: -120px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2);"></div>
-                    <div style="position: absolute; width: 170px; height: 170px; right: -45px; bottom: -80px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2);"></div>
-                    <div style="width: 72px; height: 72px; background-color: rgba(255,255,255,0.86); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; box-shadow: 0 6px 14px rgba(0,0,0,0.1); z-index: 2; cursor: pointer;" onclick="login()">
-                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                    </div>
-                    <div style="text-align: center; margin-bottom: 10px; z-index: 2;">
-                        <div style="font-size: 18px; font-weight: 600; color: white;">未登录</div>
-                        <div style="font-size: 13px; color: rgba(255,255,255,0.9); margin-top: 4px; line-height: 1.45;">点击圆形头像图标进入登录页面</div>
-                    </div>
-                </div>
-                <div style="height: 246px;"></div>
-            `;
-            memberContentMarginTop = '-24px';
-        }
-
-        // --- VIP Card Tabs ---
-        const tabs = [
-            { id: 'free', name: '免费会员' },
-            { id: 'city', name: '城市会员' },
-            { id: 'province', name: '省级会员' },
-            { id: 'country', name: '全国会员' }
-        ];
-        
-        let tabsHtml = `<div style="display: flex; background: white; padding: 4px; border-radius: 10px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">`;
-        tabs.forEach(t => {
-            const isActive = t.id === currentTab;
-            const activeStyle = isActive ? 'background: var(--primary-blue); color: white; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1);' : 'color: #666;';
-            tabsHtml += `<div onclick="switchVipCard('${t.id}')" style="flex: 1; text-align: center; padding: 8px 0; border-radius: 8px; font-size: 13px; transition: all 0.2s; cursor: pointer; ${activeStyle}">${t.name}</div>`;
-        });
-        tabsHtml += `</div>`;
-
         const memberCopyCfg = (this.state.runtimeConfig && this.state.runtimeConfig['copy.member']) || {};
+        const permissionMatrix = this.getMemberPermissionMatrix();
+        const viewText = (n) => Number(n) < 0 ? '无限制' : `${Math.max(0, Number(n || 0))}次`;
+        const keywordText = (n) => `${Math.max(0, Number(n || 0))}个`;
         const normalizeMemberCopy = (obj, t, s, b) => ({
             title: String((obj && obj.title) || t),
             subtitle: String((obj && obj.subtitle) || s),
@@ -7986,187 +8531,252 @@ const App = {
         const cityCopy = normalizeMemberCopy(memberCopyCfg.city, '城市会员', '解锁单城商机', ['本市无限浏览', '跨市浏览 100 条', '订阅 10 个关键词']);
         const provinceCopy = normalizeMemberCopy(memberCopyCfg.province, '省级会员', '统揽全省项目', ['本省无限浏览', '跨省浏览 500 条', '订阅 50 个关键词']);
         const countryCopy = normalizeMemberCopy(memberCopyCfg.country, '全国会员', '全国商机尽在掌握', ['全国无限浏览', '订阅 200 个关键词', '专属客服服务']);
-        const renderBenefitsHtml = (items) => items.map((txt) => `<div style="display: flex; align-items: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 8px;"><polyline points="20 6 9 17 4 12"></polyline></svg>${txt}</div>`).join('');
 
-        // --- VIP Card Content ---
-        let cardContent = '';
-        if (currentTab === 'free') {
-            cardContent = `
-                <div style="background: radial-gradient(circle at 18% 12%, rgba(255,255,255,0.2) 0, rgba(255,255,255,0) 34%), radial-gradient(circle at 84% 82%, rgba(0,229,255,0.2) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px; box-shadow: 0 10px 24px rgba(16,96,233,0.24);">
-                    <div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;">
-                        <div style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">${freeCopy.title}</div>
-                        <div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${freeCopy.subtitle}</div>
-                        
-                        <div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px; flex: 1; justify-content: center;">
-                            ${renderBenefitsHtml(freeCopy.benefits)}
-                        </div>
+        const planDefs = [
+            { code: 'city', title: cityCopy.title, subtitle: cityCopy.subtitle, price: cityPrice, displayPrice: this.getPlanDisplayPrice('city', cityPrice), benefits: cityCopy.benefits, views: viewText(permissionMatrix.city.viewLimit), keywords: keywordText(permissionMatrix.city.keywordLimit), scope: permissionMatrix.city.scope, devices: String(permissionMatrix.city.deviceLimit), service: String(permissionMatrix.city.serviceCount) },
+            { code: 'province', title: provinceCopy.title, subtitle: provinceCopy.subtitle, price: provincePrice, displayPrice: this.getPlanDisplayPrice('province', provincePrice), benefits: provinceCopy.benefits, views: viewText(permissionMatrix.province.viewLimit), keywords: keywordText(permissionMatrix.province.keywordLimit), scope: permissionMatrix.province.scope, devices: String(permissionMatrix.province.deviceLimit), service: String(permissionMatrix.province.serviceCount) },
+            { code: 'country', title: countryCopy.title, subtitle: countryCopy.subtitle, price: countryPrice, displayPrice: this.getPlanDisplayPrice('country', countryPrice), benefits: countryCopy.benefits, views: viewText(permissionMatrix.country.viewLimit), keywords: keywordText(permissionMatrix.country.keywordLimit), scope: permissionMatrix.country.scope, devices: String(permissionMatrix.country.deviceLimit), service: String(permissionMatrix.country.serviceCount) },
+        ];
+
+        let selectedPlan = String(this.state.memberPurchasePlan || '').trim();
+        if (!['city', 'province', 'country'].includes(selectedPlan)) selectedPlan = user.vipLevel === 'province' || user.vipLevel === 'country' ? user.vipLevel : 'city';
+        this.state.memberPurchasePlan = selectedPlan;
+        const selectedPlanDef = planDefs.find((x) => x.code === selectedPlan) || planDefs[0];
+
+        const payCfg = this.getPaymentRuntimeConfig();
+        const payMethods = [];
+        if (payCfg.wechatEnabled) payMethods.push({ code: 'wechat', label: payCfg.wechatLabel || '微信支付', color: '#07C160', icon: '微' });
+        if (payCfg.alipayEnabled) payMethods.push({ code: 'alipay', label: payCfg.alipayLabel || '支付宝支付', color: '#1677FF', icon: '支' });
+        if (payCfg.transferEnabled) payMethods.push({ code: 'bank_transfer', label: payCfg.transferLabel || '对公转账', color: '#FF9500', icon: '公' });
+        let selectedMethod = String(this.state.memberPurchaseMethod || '').trim().toLowerCase();
+        if (!payMethods.find((x) => x.code === selectedMethod)) selectedMethod = payMethods.length ? payMethods[0].code : '';
+        this.state.memberPurchaseMethod = selectedMethod;
+
+        const transfer = this.getCorporateTransferInfo();
+        const inviteEnabled = this.getFeatureFlag('inviteEnabled', true);
+        const withdrawEnabled = this.getFeatureFlag('withdrawEnabled', false);
+        const showAdminDrawer = !!(this.state.adminDrawerOpen && user.isLogged && this.isAdminUser());
+        const adminPanelHtml = this.getAdminPanelHtml();
+        const adminDrawerHtml = showAdminDrawer ? this.getAdminDrawerHtml() : '';
+        const expireText = this.normalizeVipExpireText(user.vipExpire || user.vipExpireRaw || '');
+        const levelTextMap = { free: '免费会员', city: '城市会员', province: '省级会员', country: '全国会员' };
+        const currentLevelText = levelTextMap[user.vipLevel] || '免费会员';
+        const canSubmit = !!user.isLogged;
+        const trialUsage = {
+            city: !!(user.trialUsage && user.trialUsage.city),
+            province: !!(user.trialUsage && user.trialUsage.province),
+            country: !!(user.trialUsage && user.trialUsage.country),
+        };
+
+        let currentTab = this.state.vipCardTab;
+        if (!currentTab) {
+            currentTab = user.isLogged ? (user.vipLevel || 'free') : 'free';
+            this.state.vipCardTab = currentTab;
+        }
+        if (['city', 'province', 'country'].includes(currentTab)) {
+            selectedPlan = currentTab;
+            this.state.memberPurchasePlan = currentTab;
+        }
+        const selectedPlanFromTab = planDefs.find((x) => x.code === selectedPlan) || selectedPlanDef;
+        const selectedPlanDisplay = selectedPlanFromTab || selectedPlanDef;
+
+        let userCardHtml = '';
+        let memberContentMarginTop = '-28px';
+        const cityBadgeIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#C0C0C0" stroke="#808080" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+        const provBadgeIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700" stroke="#DAA520" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+        const countryBadgeIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#333" stroke="#FFD700" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-top: -2px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+        const cityTitleIcon = '<svg width="22" height="22" viewBox="0 0 24 24" fill="#C0C0C0" stroke="#808080" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin-right:8px; flex-shrink:0;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+        const provTitleIcon = '<svg width="22" height="22" viewBox="0 0 24 24" fill="#FFD700" stroke="#DAA520" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin-right:8px; flex-shrink:0;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+        const countryTitleIcon = '<svg width="22" height="22" viewBox="0 0 24 24" fill="#333" stroke="#FFD700" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:block; margin-right:8px; flex-shrink:0;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>';
+
+        if (user.isLogged) {
+            let vipBadge = '';
+            let vipIcon = '';
+            let cardStyle = 'background: radial-gradient(circle at 18% 10%, rgba(255,255,255,0.24) 0, rgba(255,255,255,0) 36%), radial-gradient(circle at 84% 82%, rgba(0,229,255,0.2) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; box-shadow: 0 8px 24px rgba(16, 96, 233, 0.28);';
+            let avatarBorder = 'border: 2px solid rgba(255,255,255,0.8);';
+            let badgeStyle = 'background: rgba(255,255,255,0.2); color: white; backdrop-filter: blur(4px);';
+            let actionBtnStyle = 'background: rgba(255,255,255,0.2); color: white;';
+            if (user.vipLevel === 'city') {
+                vipBadge = '城市会员';
+                vipIcon = cityBadgeIcon;
+                cardStyle = 'background: linear-gradient(135deg, #2C5F2D, #1E3F1F); color: white; box-shadow: 0 4px 12px rgba(44, 95, 45, 0.3);';
+                avatarBorder = 'border: 2px solid rgba(255,255,255,0.6);';
+                badgeStyle = 'background: rgba(255,255,255,0.15); color: white; backdrop-filter: blur(4px);';
+            } else if (user.vipLevel === 'province') {
+                vipBadge = '省级会员';
+                vipIcon = provBadgeIcon;
+                cardStyle = 'background: linear-gradient(135deg, #FFD700, #FDB931); color: #5D4037; box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);';
+                avatarBorder = 'border: 2px solid rgba(255,255,255,0.8);';
+                badgeStyle = 'background: rgba(255,255,255,0.4); color: #5D4037; backdrop-filter: blur(4px); font-weight: 600;';
+                actionBtnStyle = 'background: rgba(255,255,255,0.4); color: #5D4037;';
+            } else if (user.vipLevel === 'country') {
+                vipBadge = '全国会员';
+                vipIcon = countryBadgeIcon;
+                cardStyle = 'background: linear-gradient(135deg, #1C1C1E, #2C2C2E); color: #FFD700; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); border: 1px solid #333;';
+                avatarBorder = 'border: 2px solid #FFD700;';
+                badgeStyle = 'background: linear-gradient(90deg, #FFD700, #FDB931); color: #1C1C1E; font-weight: 800; box-shadow: 0 2px 4px rgba(0,0,0,0.3);';
+                actionBtnStyle = 'background: rgba(255, 255, 255, 0.1); color: #FFD700; border: 1px solid #FFD700;';
+            }
+            const badgeHtml = user.vipLevel !== 'free'
+                ? `<span class="tag-new" style="${badgeStyle} margin-left: 8px; padding: 2px 8px; border-radius: 12px; font-size: 11px; display: flex; align-items: center;"><span style="margin-right: 4px;">${vipIcon}</span>${vipBadge}</span>`
+                : `<span class="tag-new" style="${badgeStyle} margin-left: 8px; padding: 2px 8px; border-radius: 12px; font-size: 11px;">普通用户</span>`;
+            const expireHtml = user.vipLevel !== 'free'
+                ? `<div style="font-size: 12px; opacity: 0.8; margin-top: 4px;">有效期至: ${expireText || '待同步'}</div>`
+                : '';
+            userCardHtml = `
+                <div style="${cardStyle} padding: 20px; padding-top: calc(max(env(safe-area-inset-top), 44px) + 12px); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 0; position: absolute; top: 0; left: 0; width: 100%; height: 246px;">
+                    <img src="${user.avatar}" style="width: 72px; height: 72px; border-radius: 50%; margin-bottom: 12px; object-fit: cover; ${avatarBorder} box-shadow: 0 4px 8px rgba(0,0,0,0.15);">
+                    <div style="z-index: 2; display: flex; flex-direction: column; align-items: center;">
+                        <div style="font-size: 20px; font-weight: 700; display: flex; align-items: center; margin-bottom: 6px; text-shadow: 0 1px 2px rgba(0,0,0,0.1);">${user.username}${badgeHtml}</div>
+                        ${expireHtml}
                     </div>
-                    <div style="position: absolute; right: -20px; bottom: -30px; opacity: 0.1;">
-                        <svg width="150" height="150" viewBox="0 0 24 24" fill="currentColor"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                    </div>
+                    <button style="${actionBtnStyle} position: absolute; top: calc(max(env(safe-area-inset-top), 44px) + 10px); right: 14px; border: none; width: 28px; height: 28px; border-radius: 14px; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); z-index: 30; cursor: pointer; -webkit-tap-highlight-color: transparent;" onclick="openMemberSettings()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>
+                    ${user.vipLevel === 'country' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">👑</div>' : ''}
+                    ${user.vipLevel === 'province' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">💎</div>' : ''}
+                    ${user.vipLevel === 'city' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.1; transform: rotate(15deg);">🏙️</div>' : ''}
+                    ${user.vipLevel === 'free' ? '<div style="position: absolute; right: -20px; bottom: 40px; font-size: 150px; opacity: 0.05; transform: rotate(15deg);">👤</div>' : ''}
                 </div>
+                <div style="height: 246px;"></div>
             `;
-        } else if (currentTab === 'city') {
-            cardContent = `
-                <div style="background: linear-gradient(135deg, #2C5F2D, #1E3F1F); color: white; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px;">
-                    <div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                            <div>
-                                <div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="#C0C0C0" stroke="#808080" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>
-                                    ${cityCopy.title}
-                                </div>
-                                <div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${cityCopy.subtitle}</div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 20px; font-weight: 700;">¥${cityPrice}</div>
-                                <div style="font-size: 12px; opacity: 0.8;">/年</div>
-                            </div>
-                        </div>
-                        
-                        <div style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-                            <div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(cityCopy.benefits)}</div>
-                            
-                            <div style="display: flex; align-items: center;">
-                                <div style="width: 2px; height: 40px; background: rgba(255,255,255,0.3); margin-right: 16px;"></div>
-                                <button style="background: white; color: #2C5F2D; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);" onclick="buyMember('city', ${cityPrice})">
-                                    ${user.vipLevel === 'city' ? '立即续费' : '立即开通'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="position: absolute; right: -20px; bottom: -30px; opacity: 0.15;">
-                        <svg width="150" height="150" viewBox="0 0 24 24" fill="currentColor"><path d="M3 21h18v-8H3v8zm6-11h12v-9H9v9zm12-10a1 1 0 0 1 1 1v19H2V11a1 1 0 0 1 1-1h5V2a1 1 0 0 1 1-1h13a1 1 0 0 1 1 1z"/></svg>
-                    </div>
+        } else {
+            memberContentMarginTop = '-24px';
+            userCardHtml = `
+                <div style="background: radial-gradient(circle at 16% 10%, rgba(255,255,255,0.28) 0, rgba(255,255,255,0) 36%), radial-gradient(circle at 85% 82%, rgba(0,229,255,0.22) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; padding: 20px; padding-top: calc(max(env(safe-area-inset-top), 44px) + 10px); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 0; position: absolute; top: 0; left: 0; width: 100%; height: 246px; overflow: hidden;">
+                    <div style="position: absolute; inset: 0; background: linear-gradient(120deg, rgba(255,255,255,0.12), rgba(255,255,255,0) 35%);"></div>
+                    <div style="width: 72px; height: 72px; background-color: rgba(255,255,255,0.86); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; box-shadow: 0 6px 14px rgba(0,0,0,0.1); z-index: 2; cursor: pointer;" onclick="login()"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#8E8E93" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg></div>
+                    <div style="text-align: center; margin-bottom: 10px; z-index: 2;"><div style="font-size: 18px; font-weight: 600; color: white;">未登录</div><div style="font-size: 13px; color: rgba(255,255,255,0.9); margin-top: 4px; line-height: 1.45;">点击圆形头像图标进入登录页面</div></div>
                 </div>
-            `;
-        } else if (currentTab === 'province') {
-            cardContent = `
-                <div style="background: linear-gradient(135deg, #FFD700, #FDB931); color: #5D4037; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px;">
-                    <div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                            <div>
-                                <div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="#FFD700" stroke="#DAA520" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>
-                                    ${provinceCopy.title}
-                                </div>
-                                <div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${provinceCopy.subtitle}</div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 20px; font-weight: 700;">¥${provincePrice}</div>
-                                <div style="font-size: 12px; opacity: 0.8;">/年</div>
-                            </div>
-                        </div>
-                        
-                        <div style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-                            <div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(provinceCopy.benefits)}</div>
-                            
-                            <div style="display: flex; align-items: center;">
-                                <div style="width: 2px; height: 40px; background: rgba(93, 64, 55, 0.2); margin-right: 16px;"></div>
-                                <button style="background: white; color: #5D4037; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);" onclick="buyMember('province', ${provincePrice})">
-                                    ${user.vipLevel === 'province' ? '立即续费' : '立即开通'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="position: absolute; right: -20px; bottom: -30px; opacity: 0.2;">
-                        <svg width="150" height="150" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zm0 9l2.5-1.25L12 8.5l-2.5 1.25L12 11zm0 2.5l-5-2.5-5 2.5L12 22l10-8.5-5-2.5-5 2.5z"/></svg>
-                    </div>
-                </div>
-            `;
-        } else if (currentTab === 'country') {
-            cardContent = `
-                <div style="background: linear-gradient(135deg, #1C1C1E, #2C2C2E); color: #FFD700; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px; border: 1px solid #333;">
-                    <div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                            <div>
-                                <div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">
-                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="#333" stroke="#FFD700" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M2 4l3 12h14l3-12-6 7-4-7-4 7-6-7zm3 16h14"></path></svg>
-                                    ${countryCopy.title}
-                                </div>
-                                <div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${countryCopy.subtitle}</div>
-                            </div>
-                            <div style="text-align: right;">
-                                <div style="font-size: 20px; font-weight: 700;">¥${countryPrice}</div>
-                                <div style="font-size: 12px; opacity: 0.8;">/年</div>
-                            </div>
-                        </div>
-                        
-                        <div style="flex: 1; display: flex; align-items: center; justify-content: space-between;">
-                            <div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(countryCopy.benefits)}</div>
-                            
-                            <div style="display: flex; align-items: center;">
-                                <div style="width: 2px; height: 40px; background: rgba(255, 215, 0, 0.3); margin-right: 16px;"></div>
-                                <button style="background: linear-gradient(90deg, #FFD700, #FDB931); color: #1C1C1E; border: none; padding: 8px 20px; border-radius: 20px; font-weight: 800; font-size: 14px; box-shadow: 0 4px 10px rgba(255, 215, 0, 0.3);" onclick="buyMember('country', ${countryPrice})">
-                                    ${user.vipLevel === 'country' ? '立即续费' : '立即开通'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="position: absolute; right: -20px; bottom: -30px; opacity: 0.1;">
-                        <svg width="150" height="150" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    </div>
-                </div>
+                <div style="height: 246px;"></div>
             `;
         }
 
+        const tabs = [
+            { id: 'free', name: '免费会员' },
+            { id: 'city', name: '城市会员' },
+            { id: 'province', name: '省级会员' },
+            { id: 'country', name: '全国会员' }
+        ];
+        let tabsHtml = `<div style="display: flex; background: white; padding: 4px; border-radius: 10px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">`;
+        tabs.forEach((t) => {
+            const isActive = t.id === currentTab;
+            const activeStyle = isActive ? 'background: var(--primary-blue); color: white; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1);' : 'color: #666;';
+            tabsHtml += `<div onclick="switchVipCard('${t.id}'); selectMemberPurchasePlan('${t.id}')" style="flex: 1; text-align: center; padding: 8px 0; border-radius: 8px; font-size: 13px; transition: all 0.2s; cursor: pointer; ${activeStyle}">${t.name}</div>`;
+        });
+        tabsHtml += `</div>`;
+
+        const renderBenefitsHtml = (items) => items.map((txt) => `<div style="display: flex; align-items: center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 8px;"><polyline points="20 6 9 17 4 12"></polyline></svg>${txt}</div>`).join('');
+        const renderTrialBtn = (planCode, textColor, bg) => {
+            const tried = !!trialUsage[planCode];
+            const expireDate = this.parseDate(user.vipExpireRaw || user.vipExpire || '');
+            const isActive = !!(expireDate && !isNaN(expireDate.getTime()) && expireDate.getTime() > Date.now());
+            const trialing = tried && user.vipLevel === planCode && isActive;
+            const disabled = tried || trialing || !canSubmit;
+            const text = trialing ? '试用中' : (tried ? '已试用' : '试用1个月');
+            const btnBg = disabled ? 'rgba(255,255,255,0.45)' : bg;
+            const btnColor = disabled ? 'rgba(0,0,0,0.45)' : textColor;
+            const onclick = disabled ? '' : ` onclick="buyMember('${planCode}', 0)"`;
+            return `<button${onclick} style="background:${btnBg};color:${btnColor};border:none;padding:8px 20px;border-radius:20px;font-weight:600;font-size:14px;${disabled ? 'cursor:not-allowed;' : ''}">${text}</button>`;
+        };
+        let cardContent = '';
+        if (currentTab === 'free') {
+            cardContent = `<div style="background: radial-gradient(circle at 18% 12%, rgba(255,255,255,0.2) 0, rgba(255,255,255,0) 34%), radial-gradient(circle at 84% 82%, rgba(0,229,255,0.2) 0, rgba(0,229,255,0) 44%), linear-gradient(135deg, #0F5FE9 0%, #007AFF 52%, #00B4FF 100%); color: white; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px; box-shadow: 0 10px 24px rgba(16,96,233,0.24);"><div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;"><div style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">${freeCopy.title}</div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${freeCopy.subtitle}</div><div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px; flex: 1; justify-content: center;">${renderBenefitsHtml(freeCopy.benefits)}</div></div></div>`;
+        } else if (currentTab === 'city') {
+            cardContent = `<div style="background: linear-gradient(135deg, #2C5F2D, #1E3F1F); color: white; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px;"><div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: flex-start;"><div><div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">${cityTitleIcon}${cityCopy.title}</div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${cityCopy.subtitle}</div></div><div style="text-align: right;"><div style="font-size: 20px; font-weight: 700;">${this.getPlanDisplayPrice('city', cityPrice)}</div><div style="font-size: 12px; opacity: 0.8;">/年</div></div></div><div style="flex: 1; display: flex; align-items: center; justify-content: space-between;"><div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(cityCopy.benefits)}</div>${renderTrialBtn('city', '#2C5F2D', 'white')}</div></div></div>`;
+        } else if (currentTab === 'province') {
+            cardContent = `<div style="background: linear-gradient(135deg, #FFD700, #FDB931); color: #5D4037; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px;"><div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: flex-start;"><div><div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">${provTitleIcon}${provinceCopy.title}</div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${provinceCopy.subtitle}</div></div><div style="text-align: right;"><div style="font-size: 20px; font-weight: 700;">${this.getPlanDisplayPrice('province', provincePrice)}</div><div style="font-size: 12px; opacity: 0.8;">/年</div></div></div><div style="flex: 1; display: flex; align-items: center; justify-content: space-between;"><div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(provinceCopy.benefits)}</div>${renderTrialBtn('province', '#5D4037', 'white')}</div></div></div>`;
+        } else if (currentTab === 'country') {
+            cardContent = `<div style="background: linear-gradient(135deg, #1C1C1E, #2C2C2E); color: #FFD700; padding: 24px; border-radius: 16px; position: relative; overflow: hidden; height: 180px; border: 1px solid #333;"><div style="position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;"><div style="display: flex; justify-content: space-between; align-items: flex-start;"><div><div style="font-size: 24px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center;">${countryTitleIcon}${countryCopy.title}</div><div style="font-size: 14px; opacity: 0.9; margin-bottom: 12px;">${countryCopy.subtitle}</div></div><div style="text-align: right;"><div style="font-size: 20px; font-weight: 700;">${this.getPlanDisplayPrice('country', countryPrice)}</div><div style="font-size: 12px; opacity: 0.8;">/年</div></div></div><div style="flex: 1; display: flex; align-items: center; justify-content: space-between;"><div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">${renderBenefitsHtml(countryCopy.benefits)}</div>${renderTrialBtn('country', '#1C1C1E', 'linear-gradient(90deg, #FFD700, #FDB931)')}</div></div></div>`;
+        }
+
+        const payMethodsHtml = payMethods.map((m) => {
+            const active = m.code === selectedMethod;
+            return `
+                <div onclick="selectMemberPurchaseMethod('${m.code}')" style="display:flex;align-items:center;justify-content:space-between;border:1px solid ${active ? '#0A84FF' : '#ECEDEF'};border-radius:12px;padding:12px;background:${active ? '#F4F9FF' : '#fff'};">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="width:24px;height:24px;border-radius:12px;background:${m.color};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;">${m.icon}</div>
+                        <div style="font-size:15px;color:#111;">${m.label}</div>
+                    </div>
+                    <div style="width:20px;height:20px;border-radius:10px;border:1px solid ${active ? '#0A84FF' : '#C8CBD2'};display:flex;align-items:center;justify-content:center;">
+                        ${active ? '<div style="width:10px;height:10px;border-radius:5px;background:#0A84FF;"></div>' : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        const transferHtml = selectedMethod === 'bank_transfer' ? `
+            <div style="margin-top:10px;background:#F7F8FA;border-radius:10px;padding:10px 12px;font-size:12px;line-height:1.6;color:#333;">
+                <div>公司名：${transfer.companyName}</div>
+                <div>纳税人识别号：${transfer.taxNo}</div>
+                <div>地址：${transfer.address}</div>
+                <div>电话：${transfer.phone}</div>
+                <div>开户行：${transfer.bank}</div>
+                <div>账号：${transfer.account}</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                    <button onclick="copyMemberTransferInfo()" style="border:none;background:#4B5563;color:#fff;padding:6px 10px;border-radius:8px;">复制收款信息</button>
+                </div>
+            </div>
+        ` : '';
+
+        const compareTableHtml = `
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead><tr style="background:#F8F9FB;"><th style="padding:10px 8px;text-align:left;">对比项</th><th style="padding:10px 8px;">免费</th><th style="padding:10px 8px;">城市</th><th style="padding:10px 8px;">省级</th><th style="padding:10px 8px;">全国</th></tr></thead>
+                <tbody>
+                    <tr><td style="padding:10px 8px;border-top:1px solid #F0F1F3;">查阅范围</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${permissionMatrix.free.scope}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[0].scope}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[1].scope}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[2].scope}</td></tr>
+                    <tr><td style="padding:10px 8px;border-top:1px solid #F0F1F3;">项目查看</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${viewText(permissionMatrix.free.viewLimit)}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[0].views}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[1].views}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[2].views}</td></tr>
+                    <tr><td style="padding:10px 8px;border-top:1px solid #F0F1F3;">关键词订阅</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${keywordText(permissionMatrix.free.keywordLimit)}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[0].keywords}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[1].keywords}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[2].keywords}</td></tr>
+                    <tr><td style="padding:10px 8px;border-top:1px solid #F0F1F3;">设备登录数</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${Math.max(1, Number(permissionMatrix.free.deviceLimit || 1))}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[0].devices}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[1].devices}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[2].devices}</td></tr>
+                    <tr><td style="padding:10px 8px;border-top:1px solid #F0F1F3;">人工服务</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${Math.max(0, Number(permissionMatrix.free.serviceCount || 0))}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[0].service}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[1].service}</td><td style="text-align:center;border-top:1px solid #F0F1F3;">${planDefs[2].service}</td></tr>
+                </tbody>
+            </table>
+        `;
+
         return `
-            <div class="member-root" style="padding: 0; width: 100%; position: relative;">
+            <div class="member-root" style="padding:0;width:100%;position:relative;background:#F2F2F7;">
                 ${this.renderMemberHeader()}
                 ${userCardHtml}
-                
-                <div style="padding: 16px; margin-top: ${memberContentMarginTop}; position: relative; z-index: 10; background: #F2F2F7; border-top-left-radius: 20px; border-top-right-radius: 20px; min-height: 500px;">
-                    <!-- 会员套餐 Tabs -->
+                <div style="padding: 16px; margin-top: ${memberContentMarginTop}; position: relative; z-index: 10; background: #F2F2F7; border-top-left-radius: 20px; border-top-right-radius: 20px; min-height: 500px; padding-bottom:100px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 4px 0 4px;">
-                         <div style="font-size: 18px; font-weight: 700; color: #333; display: flex; align-items: center;">
+                        <div style="font-size: 18px; font-weight: 700; color: #333; display: flex; align-items: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #FF9500;"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
                             会员权益
-                         </div>
+                        </div>
                     </div>
                     ${tabsHtml}
-                    
-                    <!-- 卡片内容 -->
-                    <div style="margin-bottom: 24px;">
-                        ${cardContent}
+                    <div style="margin-bottom: 16px;">${cardContent}</div>
+
+                    <div style="background:#fff;border-radius:14px;padding:14px;box-shadow:0 4px 12px rgba(0,0,0,0.04);margin-bottom:12px;">
+                        <div style="font-size:16px;font-weight:700;color:#111;margin-bottom:10px;">权益对比</div>
+                        <div style="overflow:auto;">${compareTableHtml}</div>
                     </div>
-                    
-                    <!-- 激活码区域 -->
-                    <div style="background-color: white; padding: 16px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                        <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #34C759;"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
-                            会员激活
-                        </div>
-                        <div class="activation-box">
-                            <input type="text" class="activation-input" placeholder="请输入激活码 (如 VIPALL)" id="activation-code">
-                            <button class="activation-btn" style="background:var(--primary-blue); color:white; border:none; padding:8px 16px; border-radius:8px; margin-left:8px;" onclick="activateMember()">激活</button>
+
+                    <div style="background:#fff;padding:14px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,0.04);margin-bottom:12px;">
+                        <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:8px;">会员激活</div>
+                        <div style="display:flex;gap:8px;">
+                            <input type="text" class="activation-input" placeholder="请输入激活码 (如 VIPALL)" id="activation-code" style="flex:1;height:40px;border:1px solid #E5E7EB;border-radius:10px;padding:0 12px;">
+                            <button style="background:#0A84FF;color:#fff;border:none;padding:0 16px;border-radius:10px;" onclick="activateMember()">激活</button>
                         </div>
                     </div>
-                    
-                    <!-- 推广赚钱 -->
-                    <div style="background-color: white; padding: 16px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <div style="font-size: 16px; font-weight: 600; display: flex; align-items: center;">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; color: #FF3B30;"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                                推广赚钱
-                            </div>
-                            <div style="font-size: 13px; color: var(--tag-orange-text);">已赚 ¥${user.inviteRewardTotal.toFixed(2)}</div>
+
+                    <div style="background:#fff;padding:14px;border-radius:14px;box-shadow:0 4px 12px rgba(0,0,0,0.04);margin-bottom:14px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div style="font-size:15px;font-weight:700;color:#111;">推广收益</div>
+                            <div style="font-size:12px;color:#FF5A2A;">已赚 ¥${user.inviteRewardTotal.toFixed(2)}</div>
                         </div>
-                        <div style="font-size: 12px; color: #666; margin-bottom: 12px;">邀请码：${user.inviteCode || '生成中'} · 邀请人数：${user.invitedCount}</div>
-                        <div style="display: flex; justify-content: space-around;">
-                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; ${inviteEnabled ? '' : 'opacity:0.4;'}" onclick="${inviteEnabled ? 'shareInviteLink()' : `alert('邀请功能暂未开启')`}">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                                <span style="font-size: 12px;">邀请好友</span>
-                            </div>
-                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; ${withdrawEnabled ? '' : 'opacity:0.4;'}" onclick="${withdrawEnabled ? `alert('请联系财务审核提现')` : `alert('提现功能暂未开启')`}">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
-                                <span style="font-size: 12px;">申请提现</span>
-                            </div>
-                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;" onclick="openReferralRecords()">
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#AF52DE" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                                <span style="font-size: 12px;">邀请记录</span>
-                            </div>
+                        <div style="font-size:12px;color:#666;margin-top:6px;">邀请码：${user.inviteCode || '生成中'} · 邀请人数：${user.invitedCount}</div>
+                        <div style="display:flex;gap:10px;margin-top:10px;">
+                            <button onclick="${inviteEnabled ? 'shareInviteLink()' : `alert('邀请功能暂未开启')`}" style="flex:1;height:36px;border:none;border-radius:9px;background:${inviteEnabled ? '#E9F2FF' : '#F2F3F5'};color:#0A84FF;">邀请好友</button>
+                            <button onclick="${withdrawEnabled ? `alert('请联系财务审核提现')` : `alert('提现功能暂未开启')`}" style="flex:1;height:36px;border:none;border-radius:9px;background:${withdrawEnabled ? '#EAF8EC' : '#F2F3F5'};color:#2F7A3B;">申请提现</button>
+                            <button onclick="openReferralRecords()" style="flex:1;height:36px;border:none;border-radius:9px;background:#F5EEFF;color:#8B5CF6;">邀请记录</button>
                         </div>
                     </div>
+                </div>
+
+                <div style="position:fixed;left:0;right:0;bottom:calc(max(env(safe-area-inset-bottom), 0px));background:#fff;border-top:1px solid #ECECEC;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;z-index:200;">
+                    <div>
+                        <div style="font-size:12px;color:#999;">当前套餐</div>
+                        <div style="font-size:22px;font-weight:800;color:#FF5A2A;line-height:1.1;">试用1个月</div>
+                    </div>
+                    <button onclick="buyMember('${selectedPlanDisplay ? selectedPlanDisplay.code : 'city'}', 0)" style="height:44px;min-width:138px;border:none;border-radius:12px;background:${canSubmit ? '#0A84FF' : '#C7CBD3'};color:#fff;font-size:16px;font-weight:700;">${(() => { const code = selectedPlanDisplay ? selectedPlanDisplay.code : 'city'; const tried = !!trialUsage[code]; const d = this.parseDate(user.vipExpireRaw || user.vipExpire || ''); const active = !!(d && !isNaN(d.getTime()) && d.getTime() > Date.now()); return tried && user.vipLevel === code && active ? '试用中' : (tried ? '已试用' : '试用1个月'); })()}</button>
                 </div>
             </div>
             ${adminDrawerHtml}

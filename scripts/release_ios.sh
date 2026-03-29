@@ -107,7 +107,7 @@ fi
 echo "步骤7/7: 归档并导出 IPA"
 ARCHIVE_PATH="/tmp/BiddingRadar-${RELEASE_TAG}.xcarchive"
 EXPORT_PATH="/tmp/BiddingRadar-${RELEASE_TAG}-export"
-IPA_NAME="招投标雷达-${RELEASE_TAG}.ipa"
+IPA_NAME="商机雷达-${RELEASE_TAG}.ipa"
 rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"
 $XCODEBUILD \
   -project "$IOS_PROJECT" \

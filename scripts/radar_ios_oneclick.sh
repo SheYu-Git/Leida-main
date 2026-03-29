@@ -17,7 +17,7 @@ if [[ -z "$DEVICE_UDID" ]]; then
 fi
 
 echo "使用设备: $DEVICE_UDID"
-echo "同步招投标雷达前端资源..."
+echo "同步商机雷达前端资源..."
 rm -rf "$PUBLIC_DIR"
 mkdir -p "$PUBLIC_DIR"
 cp -R "$ROOT_DIR/index.html" "$ROOT_DIR/css" "$ROOT_DIR/js" "$ROOT_DIR/assets" "$PUBLIC_DIR"/
@@ -47,4 +47,4 @@ xcrun devicectl device process launch --device "$DEVICE_UDID" "$BUNDLE_ID" --act
 
 echo "校验安装结果..."
 xcrun devicectl device info apps --device "$DEVICE_UDID" | grep -i "$BUNDLE_ID"
-echo "完成：招投标雷达已构建、安装并拉起"
+echo "完成：商机雷达已构建、安装并拉起"

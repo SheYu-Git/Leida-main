@@ -73,14 +73,22 @@ router.get('/list', async (req: Request, res: Response) => {
 
   const state = await BiddingSyncState.findByPk(1);
   const lagAlertMin = Math.max(1, Number(process.env.BIDDING_SYNC_ALERT_LAG_MIN || 15));
+  const staleAlertHours = Math.max(1, Number(process.env.BIDDING_DATA_STALE_HOURS || 24));
   const successAt = Number((state as any)?.last_success_at || 0);
   const actionAt = Number((state as any)?.last_attempt_at || 0);
   const lagMin = successAt ? Math.max(0, Math.floor((Date.now() - successAt) / 60000)) : -1;
+  const latestDataLagMin = latestDataAt ? Math.max(0, Math.floor((Date.now() - latestDataAt) / 60000)) : -1;
+  const staleAlertMin = staleAlertHours * 60;
+  const dataStale = !latestDataAt || latestDataLagMin >= staleAlertMin;
   const lastError = String((state as any)?.last_error || '').trim();
-  const alertActive = !successAt || !!lastError || (lagMin >= lagAlertMin);
+  const alertActive = !successAt || !!lastError || (lagMin >= lagAlertMin) || dataStale;
   const alertReason = !successAt
     ? '未检测到成功同步'
-    : (lastError ? `同步异常：${lastError}` : (lagMin >= lagAlertMin ? `同步延迟超过${lagAlertMin}分钟` : ''));
+    : (lastError
+      ? `同步异常：${lastError}`
+      : (lagMin >= lagAlertMin
+        ? `同步延迟超过${lagAlertMin}分钟`
+        : (dataStale ? `数据未更新超过${staleAlertHours}小时` : '')));
   const nowMs = Date.now();
   const startOfToday = getCstStartOfDayMs(nowMs);
   const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
@@ -103,6 +111,9 @@ router.get('/list', async (req: Request, res: Response) => {
       actionAt,
       successAt,
       lagMin,
+      latestDataLagMin,
+      dataStale,
+      staleAlertHours,
       alertActive,
       alertReason,
       latestDataAt,
